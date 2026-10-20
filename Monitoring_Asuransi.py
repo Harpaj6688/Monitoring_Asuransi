@@ -1,0 +1,296 @@
+from datetime import datetime
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+# ---------------------------------------------------------
+# 1. Konfigurasi Halaman Dashboard
+# ---------------------------------------------------------
+st.set_page_config(
+    page_title="MSS Insurance Claim & SLA Dashboard",
+    page_icon="🛡️",
+    layout="wide",
+)
+
+st.title("🛡️ MSS Insurance Claim & SLA Tracking Dashboard")
+st.caption("Live Connection Google Sheets (Google Form) & Otomatisasi SLA")
+
+SHEET_ID = "15jMIWecycZgWFJ4zWMRNp8FCT5umgqdok_hF2ByHTeQ"
+GID = "1414464208"
+CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID}"
+
+
+# ---------------------------------------------------------
+# 2. Function Parsing Tanggal & Kalkulasi Aging
+# ---------------------------------------------------------
+def parse_mixed_date(date_val):
+  if pd.isna(date_val) or str(date_val).strip() == "":
+    return pd.NaT
+  date_str = str(date_val).strip().split()[0]
+  for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"):
+    try:
+      return pd.to_datetime(date_str, format=fmt)
+    except (ValueError, TypeError):
+      continue
+  return pd.to_datetime(date_str, dayfirst=True, errors="coerce")
+
+
+@st.cache_data(ttl=30)
+def load_and_process_google_sheet():
+  df = pd.read_csv(CSV_URL)
+  df.columns = df.columns.astype(str).str.strip()
+
+  col_incident = next((c for c in df.columns if "Insiden" in c), "Tanggal Insiden")
+  col_lappol = next(
+      (c for c in df.columns if "Polisi" in c), "Tanggal Pelaporan Kepolisian"
+  )
+
+  col_submit_date_candidates = [
+      c
+      for c in df.columns
+      if ("Submit" in c or "Submission" in c)
+      and ("Date" in c or "Tanggal" in c)
+  ]
+  col_submit_date = (
+      col_submit_date_candidates[0] if col_submit_date_candidates else None
+  )
+
+  df["_Insiden_Parsed"] = df[col_incident].apply(parse_mixed_date)
+  df["_LapPol_Parsed"] = df[col_lappol].apply(parse_mixed_date)
+  df["_Submit_Parsed"] = (
+      df[col_submit_date].apply(parse_mixed_date)
+      if col_submit_date
+      else pd.NaT
+  )
+
+  today = pd.Timestamp(datetime.now().date())
+
+  df["_Insiden_Valid"] = df["_Insiden_Parsed"].apply(
+      lambda x: x if pd.isna(x) or x <= today else pd.NaT
+  )
+  df["_LapPol_Valid"] = df["_LapPol_Parsed"].apply(
+      lambda x: x if pd.isna(x) or x <= today else pd.NaT
+  )
+  df["_Submit_Valid"] = df["_Submit_Parsed"].apply(
+      lambda x: x if pd.isna(x) or x <= today else pd.NaT
+  )
+
+  # A. Aging Incident
+  df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
+
+  # B. Aging Pelaporan & Status Pelaporan
+  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Valid"]).dt.days
+
+  def get_pelaporan_status(aging):
+    if pd.isna(aging):
+      return "Belum Ada LapPol"
+    elif aging < 30:
+      return "Submit Asuransi Soon"
+    elif 30 <= aging <= 45:
+      return "Asuransi Diperjuangkan"
+    else:
+      return "Asuransi Expired"
+
+  df["Status Aging Pelaporan"] = df["Aging Pelaporan (Hari)"].apply(
+      get_pelaporan_status
+  )
+
+  # C. Status & Aging Submission (GAP dari Tanggal Submit Asuransi s/d Hari Ini)
+  def get_submission_info(row):
+    sub_date = row["_Submit_Valid"]
+
+    if pd.isna(sub_date):
+      return "Belum Submit", np.nan
+    else:
+      aging_sub = (today - sub_date).days
+      return "Sudah Submit", max(0, aging_sub)
+
+  sub_results = df.apply(get_submission_info, axis=1)
+  df["Status Submission"] = [res[0] for res in sub_results]
+  df["Aging Submission (Hari)"] = [res[1] for res in sub_results]
+
+  return df, today
+
+
+try:
+  df, today_date = load_and_process_google_sheet()
+
+  # ---------------------------------------------------------
+  # 3. Sidebar Filter Utama
+  # ---------------------------------------------------------
+  st.sidebar.header("🔍 Filter Dashboard")
+  st.sidebar.info(f"📅 **Tanggal System:**\n{today_date.strftime('%d %B %Y')}")
+
+  if st.sidebar.button("🔄 Refresh Data Form"):
+    st.cache_data.clear()
+    st.rerun()
+
+  selected_prov = st.sidebar.multiselect(
+      "Pilih Provinsi",
+      options=df["Provinsi"].dropna().unique(),
+      default=df["Provinsi"].dropna().unique(),
+  )
+
+  selected_status = st.sidebar.multiselect(
+      "Pilih Status Aging Pelaporan",
+      options=df["Status Aging Pelaporan"].unique(),
+      default=df["Status Aging Pelaporan"].unique(),
+  )
+
+  df_filtered = df[
+      (df["Provinsi"].isin(selected_prov))
+      & (df["Status Aging Pelaporan"].isin(selected_status))
+  ]
+
+  # ---------------------------------------------------------
+  # 4. Top Metric Scoreboard
+  # ---------------------------------------------------------
+  total_site = len(df_filtered)
+  count_soon = len(
+      df_filtered[df_filtered["Status Aging Pelaporan"] == "Submit Asuransi Soon"]
+  )
+  count_diperjuangkan = len(
+      df_filtered[
+          df_filtered["Status Aging Pelaporan"] == "Asuransi Diperjuangkan"
+      ]
+  )
+  count_expired = len(
+      df_filtered[df_filtered["Status Aging Pelaporan"] == "Asuransi Expired"]
+  )
+
+  count_sudah_submit = len(
+      df_filtered[df_filtered["Status Submission"] == "Sudah Submit"]
+  )
+  count_reminder = len(
+      df_filtered[df_filtered["Status Submission"] == "Belum Submit"]
+  )
+
+  m1, m2, m3, m4 = st.columns(4)
+  m1.metric("Total Site Insiden", f"{total_site} Site")
+  m2.metric("🟠 Submit Soon (<30 hr)", f"{count_soon} Site")
+  m3.metric("🟡 Diperjuangkan (30-45 hr)", f"{count_diperjuangkan} Site")
+  m4.metric("🔴 Expired (>45 hr)", f"{count_expired} Site")
+
+  s1, s2 = st.columns(2)
+  s1.metric("✅ Sudah Submit Asuransi", f"{count_sudah_submit} Site")
+  s2.metric("🔔 Reminding Harus Dikirim (Belum Submit)", f"{count_reminder} Site")
+
+  st.markdown("---")
+
+  # ---------------------------------------------------------
+  # 5. Visualisasi Charts
+  # ---------------------------------------------------------
+  c1, c2 = st.columns(2)
+
+  with c1:
+    st.subheader("📊 Distribusi Status Aging Pelaporan")
+    color_map = {
+        "Submit Asuransi Soon": "#ff7f0e",
+        "Asuransi Diperjuangkan": "#f1c40f",
+        "Asuransi Expired": "#e74c3c",
+        "Belum Ada LapPol": "#95a5a6",
+    }
+    fig_pie = px.pie(
+        df_filtered,
+        names="Status Aging Pelaporan",
+        color="Status Aging Pelaporan",
+        color_discrete_map=color_map,
+        hole=0.45,
+    )
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+  with c2:
+    st.subheader("📈 Rata-Rata Aging per Provinsi")
+    df_avg = (
+        df_filtered.groupby("Provinsi")[
+            ["Aging Incident (Hari)", "Aging Pelaporan (Hari)"]
+        ]
+        .mean()
+        .reset_index()
+    )
+    fig_bar = px.bar(
+        df_avg,
+        x="Provinsi",
+        y=["Aging Incident (Hari)", "Aging Pelaporan (Hari)"],
+        barmode="group",
+        title="Rata-rata Aging Incident vs Pelaporan",
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+  # ---------------------------------------------------------
+  # 6. Tabel Detail Bersih & Format Integer (Tanpa Desimal)
+  # ---------------------------------------------------------
+  st.subheader("📋 Detail Status & Aging Site (Form Original Columns)")
+
+  col_f1, col_f2 = st.columns([2, 4])
+  with col_f1:
+    unique_statuses = ["Semua"] + list(
+        df_filtered["Status Aging Pelaporan"].unique()
+    )
+    table_status_filter = st.selectbox(
+        "🔍 Filter Tabel Berdasarkan Status", unique_statuses
+    )
+
+  if table_status_filter != "Semua":
+    df_table_final = df_filtered[
+        df_filtered["Status Aging Pelaporan"] == table_status_filter
+    ]
+  else:
+    df_table_final = df_filtered
+
+  original_form_cols = [
+      c for c in df.columns if not c.startswith("_") and c not in [
+          "Aging Incident (Hari)",
+          "Aging Pelaporan (Hari)",
+          "Status Aging Pelaporan",
+          "Status Submission",
+          "Aging Submission (Hari)",
+      ]
+  ]
+
+  added_cols = [
+      "Aging Incident (Hari)",
+      "Aging Pelaporan (Hari)",
+      "Status Aging Pelaporan",
+      "Status Submission",
+      "Aging Submission (Hari)",
+  ]
+
+  df_table_display = df_table_final[original_form_cols + added_cols].copy()
+
+  st.dataframe(
+      df_table_display.style.format(
+          {
+              "Aging Incident (Hari)": "{:.0f}",
+              "Aging Pelaporan (Hari)": "{:.0f}",
+              "Aging Submission (Hari)": "{:.0f}",
+          },
+          na_rep="-",
+      ).map(
+          lambda val: (
+              "background-color: #ffcdd2; color: #b71c1c; font-weight: bold;"
+              if val == "Asuransi Expired"
+              else (
+                  "background-color: #fff9c4; color: #f57f17;"
+                  if val == "Asuransi Diperjuangkan"
+                  else (
+                      "background-color: #ffe0b2; color: #e65100;"
+                      if val == "Submit Asuransi Soon"
+                      else (
+                          "background-color: #ffebee; color: #c62828;"
+                          if val == "Belum Submit"
+                          else ""
+                      )
+                  )
+              )
+          ),
+          subset=["Status Aging Pelaporan", "Status Submission"],
+      ),
+      use_container_width=True,
+      height=500,
+  )
+
+except Exception as e:
+  st.error("Terjadi kendala pada script dashboard:")
+  st.exception(e)
