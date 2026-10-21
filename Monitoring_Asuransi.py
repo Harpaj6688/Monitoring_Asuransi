@@ -47,10 +47,7 @@ def load_and_process_google_sheet():
   )
 
   col_submit_date_candidates = [
-      c
-      for c in df.columns
-      if ("Submit" in c or "Submission" in c)
-      and ("Date" in c or "Tanggal" in c)
+      c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])
   ]
   col_submit_date = (
       col_submit_date_candidates[0] if col_submit_date_candidates else None
@@ -58,11 +55,11 @@ def load_and_process_google_sheet():
 
   df["_Insiden_Parsed"] = df[col_incident].apply(parse_mixed_date)
   df["_LapPol_Parsed"] = df[col_lappol].apply(parse_mixed_date)
-  df["_Submit_Parsed"] = (
-      df[col_submit_date].apply(parse_mixed_date)
-      if col_submit_date
-      else pd.NaT
-  )
+
+  if col_submit_date:
+    df["_Submit_Parsed"] = df[col_submit_date].apply(parse_mixed_date)
+  else:
+    df["_Submit_Parsed"] = pd.NaT
 
   today = pd.Timestamp(datetime.now().date())
 
@@ -72,7 +69,6 @@ def load_and_process_google_sheet():
   df["_LapPol_Valid"] = df["_LapPol_Parsed"].apply(
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
-  df["_Submit_Valid"] = df["_Submit_Parsed"]
 
   # A. Aging Incident
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
@@ -94,17 +90,22 @@ def load_and_process_google_sheet():
       get_pelaporan_status
   )
 
-  # C. Status & Aging Submission (Revisi Logika Tanggal Submission)
+  # C. Status & Aging Submission (Revisi: Asal terisi, masuk Sudah Submit)
   def get_submission_info(row):
-    raw_sub = row["_Submit_Parsed"]
+    raw_sub_val = row[col_submit_date] if col_submit_date else None
+    parsed_sub = row["_Submit_Parsed"]
 
-    if pd.isna(raw_sub):
+    if pd.isna(raw_sub_val) or str(raw_sub_val).strip() == "" or str(raw_sub_val).strip().lower() == "nan":
       return "Belum Submit", np.nan
-    elif raw_sub > today:
+    
+    if not pd.isna(parsed_sub) and parsed_sub > today:
       return "Salah Input Tanggal", np.nan
-    else:
-      aging_sub = (today - raw_sub).days
+    
+    if not pd.isna(parsed_sub):
+      aging_sub = (today - parsed_sub).days
       return "Sudah Submit", max(0, aging_sub)
+    else:
+      return "Sudah Submit", 0
 
   sub_results = df.apply(get_submission_info, axis=1)
   df["Status Submission"] = [res[0] for res in sub_results]
@@ -294,3 +295,4 @@ try:
 except Exception as e:
   st.error("Terjadi kendala pada script dashboard:")
   st.exception(e)
+```[cite: 1]
