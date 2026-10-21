@@ -18,7 +18,7 @@ st.caption("Live Connection Google Sheets (Google Form) & Otomatisasi SLA")
 
 SHEET_ID = "15jMIWecycZgWFJ4zWMRNp8FCT5umgqdok_hF2ByHTeQ"
 GID = "1414464208"
-CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID}"
+CSV_URL = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv&gid={GID}"
 
 
 # ---------------------------------------------------------
@@ -70,15 +70,12 @@ def load_and_process_google_sheet():
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
 
-  # A. Aging Incident
+  # A. Aging Incident & Status Berdasarkan Aging Incident
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
 
-  # B. Aging Pelaporan & Status Pelaporan
-  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Valid"]).dt.days
-
-  def get_pelaporan_status(aging):
+  def get_insiden_status(aging):
     if pd.isna(aging):
-      return "Belum Ada LapPol"
+      return "Belum Ada Insiden"
     elif aging < 30:
       return "Submit Asuransi Soon"
     elif 30 <= aging <= 45:
@@ -86,11 +83,14 @@ def load_and_process_google_sheet():
     else:
       return "Asuransi Expired"
 
-  df["Status Aging Pelaporan"] = df["Aging Pelaporan (Hari)"].apply(
-      get_pelaporan_status
+  df["Status Aging Pelaporan"] = df["Aging Incident (Hari)"].apply(
+      get_insiden_status
   )
 
-  # C. Status & Aging Submission 
+  # B. Aging Pelaporan Polisi
+  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Valid"]).dt.days
+
+  # C. Status & Aging Submission
   def get_submission_info(row):
     raw_sub_val = row[col_submit_date] if col_submit_date else None
     parsed_sub = row["_Submit_Parsed"]
@@ -134,7 +134,7 @@ try:
   )
 
   selected_status = st.sidebar.multiselect(
-      "Pilih Status Aging Pelaporan",
+      "Pilih Status Aging Insiden",
       options=df["Status Aging Pelaporan"].unique(),
       default=df["Status Aging Pelaporan"].unique(),
   )
@@ -171,7 +171,7 @@ try:
   m1.metric("Total Site Insiden", f"{total_site} Site")
   m2.metric("🟠 Submit Soon (<30 hr)", f"{count_soon} Site")
   m3.metric("🟡 Diperjuangkan (30-45 hr)", f"{count_diperjuangkan} Site")
-  m4.metric("🔴 Expired (>45 hr)", f"{count_expired} Site")
+  m4.metric("🔴 Expired (>=45 hr)", f"{count_expired} Site")
 
   s1, s2 = st.columns(2)
   s1.metric("✅ Sudah Submit Asuransi", f"{count_sudah_submit} Site")
@@ -185,12 +185,12 @@ try:
   c1, c2 = st.columns(2)
 
   with c1:
-    st.subheader("📊 Distribusi Status Aging Pelaporan")
+    st.subheader("📊 Distribusi Status Aging Insiden")
     color_map = {
         "Submit Asuransi Soon": "#ff7f0e",
         "Asuransi Diperjuangkan": "#f1c40f",
         "Asuransi Expired": "#e74c3c",
-        "Belum Ada LapPol": "#95a5a6",
+        "Belum Ada Insiden": "#95a5a6",
     }
     fig_pie = px.pie(
         df_filtered,
@@ -220,25 +220,37 @@ try:
     st.plotly_chart(fig_bar, use_container_width=True)
 
   # ---------------------------------------------------------
-  # 6. Tabel Detail Bersih & Format Integer (Tanpa Desimal)
+  # 6. Tabel Detail dengan 2 Filter (Status Aging & Status Submission)
   # ---------------------------------------------------------
   st.subheader("📋 Detail Status & Aging Site (Form Original Columns)")
 
-  col_f1, col_f2 = st.columns([2, 4])
+  col_f1, col_f2 = st.columns(2)
   with col_f1:
     unique_statuses = ["Semua"] + list(
         df_filtered["Status Aging Pelaporan"].unique()
     )
     table_status_filter = st.selectbox(
-        "🔍 Filter Tabel Berdasarkan Status", unique_statuses
+        "🔍 1. Filter Berdasarkan Status Aging Insiden", unique_statuses
     )
 
+  with col_f2:
+    unique_sub_statuses = ["Semua"] + list(
+        df_filtered["Status Submission"].unique()
+    )
+    table_sub_filter = st.selectbox(
+        "🔍 2. Filter Berdasarkan Status Submission", unique_sub_statuses
+    )
+
+  # Terapkan filter tabel
+  df_table_final = df_filtered.copy()
   if table_status_filter != "Semua":
-    df_table_final = df_filtered[
-        df_filtered["Status Aging Pelaporan"] == table_status_filter
+    df_table_final = df_table_final[
+        df_table_final["Status Aging Pelaporan"] == table_status_filter
     ]
-  else:
-    df_table_final = df_filtered
+  if table_sub_filter != "Semua":
+    df_table_final = df_table_final[
+        df_table_final["Status Submission"] == table_sub_filter
+    ]
 
   original_form_cols = [
       c for c in df.columns if not c.startswith("_") and c not in [
@@ -281,7 +293,11 @@ try:
                       else (
                           "background-color: #ffebee; color: #c62828;"
                           if val in ["Belum Submit", "Salah Input Tanggal"]
-                          else ""
+                          else (
+                              "background-color: #c8e6c9; color: #2e7d32;"
+                              if val == "Sudah Submit"
+                              else ""
+                          )
                       )
                   )
               )
