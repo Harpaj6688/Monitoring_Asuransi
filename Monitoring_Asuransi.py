@@ -72,9 +72,7 @@ def load_and_process_google_sheet():
   df["_LapPol_Valid"] = df["_LapPol_Parsed"].apply(
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
-  df["_Submit_Valid"] = df["_Submit_Parsed"].apply(
-      lambda x: x if pd.isna(x) or x <= today else pd.NaT
-  )
+  df["_Submit_Valid"] = df["_Submit_Parsed"]
 
   # A. Aging Incident
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
@@ -96,14 +94,16 @@ def load_and_process_google_sheet():
       get_pelaporan_status
   )
 
-  # C. Status & Aging Submission (GAP dari Tanggal Submit Asuransi s/d Hari Ini)
+  # C. Status & Aging Submission (Revisi Logika Tanggal Submission)
   def get_submission_info(row):
-    sub_date = row["_Submit_Valid"]
+    raw_sub = row["_Submit_Parsed"]
 
-    if pd.isna(sub_date):
+    if pd.isna(raw_sub):
       return "Belum Submit", np.nan
+    elif raw_sub > today:
+      return "Salah Input Tanggal", np.nan
     else:
-      aging_sub = (today - sub_date).days
+      aging_sub = (today - raw_sub).days
       return "Sudah Submit", max(0, aging_sub)
 
   sub_results = df.apply(get_submission_info, axis=1)
@@ -279,7 +279,7 @@ try:
                       if val == "Submit Asuransi Soon"
                       else (
                           "background-color: #ffebee; color: #c62828;"
-                          if val == "Belum Submit"
+                          if val in ["Belum Submit", "Salah Input Tanggal"]
                           else ""
                       )
                   )
