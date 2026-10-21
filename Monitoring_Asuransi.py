@@ -18,7 +18,7 @@ st.caption("Live Connection Google Sheets (Google Form) & Otomatisasi SLA")
 
 SHEET_ID = "15jMIWecycZgWFJ4zWMRNp8FCT5umgqdok_hF2ByHTeQ"
 GID = "1414464208"
-CSV_URL = f"[https://docs.google.com/spreadsheets/d/](https://docs.google.com/spreadsheets/d/){SHEET_ID}/export?format=csv&gid={GID}"
+CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID}"
 
 
 # ---------------------------------------------------------
