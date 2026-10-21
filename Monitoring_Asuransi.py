@@ -25,10 +25,19 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&
 # 2. Function Parsing Tanggal & Kalkulasi Aging
 # ---------------------------------------------------------
 def parse_mixed_date(date_val):
-  if pd.isna(date_val) or str(date_val).strip() == "":
+  if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() == "nan":
     return pd.NaT
+  
+  # Coba parsing otomatis dengan pandas terlebih dahulu (sangat fleksibel)
+  try:
+    parsed = pd.to_datetime(date_val, errors="coerce", dayfirst=True)
+    if not pd.isna(parsed):
+      return parsed
+  except Exception:
+    pass
+
   date_str = str(date_val).strip().split()[0]
-  for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"):
+  for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d-%m-%y"):
     try:
       return pd.to_datetime(date_str, format=fmt)
     except (ValueError, TypeError):
@@ -41,22 +50,21 @@ def load_and_process_google_sheet():
   df = pd.read_csv(CSV_URL)
   df.columns = df.columns.astype(str).str.strip()
 
-  col_incident = next((c for c in df.columns if "Insiden" in c), "Tanggal Insiden")
-  col_lappol = next(
-      (c for c in df.columns if "Polisi" in c), "Tanggal Pelaporan Kepolisian"
-  )
+  # Deteksi kolom Tanggal Insiden secara fleksibel
+  incident_candidates = [c for c in df.columns if any(k in c.lower() for k in ["insiden", "kejadian", "incident"])]
+  col_incident = incident_candidates[0] if incident_candidates else "Tanggal Insiden"
 
-  col_submit_date_candidates = [
-      c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])
-  ]
-  col_submit_date = (
-      col_submit_date_candidates[0] if col_submit_date_candidates else None
-  )
+  lappol_candidates = [c for c in df.columns if any(k in c.lower() for k in ["polisi", "lappol", "lap_pol"])]
+  col_lappol = lappol_candidates[0] if lappol_candidates else "Tanggal Pelaporan Kepolisian"
 
-  df["_Insiden_Parsed"] = df[col_incident].apply(parse_mixed_date)
-  df["_LapPol_Parsed"] = df[col_lappol].apply(parse_mixed_date)
+  submit_candidates = [c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])]
+  col_submit_date = submit_candidates[0] if submit_candidates else None
 
-  if col_submit_date:
+  # Eksekusi Parsing Tanggal
+  df["_Insiden_Parsed"] = df[col_incident].apply(parse_mixed_date) if col_incident in df.columns else pd.NaT
+  df["_LapPol_Parsed"] = df[col_lappol].apply(parse_mixed_date) if col_lappol in df.columns else pd.NaT
+
+  if col_submit_date and col_submit_date in df.columns:
     df["_Submit_Parsed"] = df[col_submit_date].apply(parse_mixed_date)
   else:
     df["_Submit_Parsed"] = pd.NaT
@@ -70,7 +78,7 @@ def load_and_process_google_sheet():
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
 
-  # A. Aging Incident & Status Berdasarkan Aging Incident
+  # A. Aging Incident & Status Berdasarkan Aging Incident (SLA Kategori Baru)
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
 
   def get_insiden_status(aging):
@@ -92,7 +100,7 @@ def load_and_process_google_sheet():
 
   # C. Status & Aging Submission
   def get_submission_info(row):
-    raw_sub_val = row[col_submit_date] if col_submit_date else None
+    raw_sub_val = row[col_submit_date] if (col_submit_date and col_submit_date in df.columns) else None
     parsed_sub = row["_Submit_Parsed"]
 
     if pd.isna(raw_sub_val) or str(raw_sub_val).strip() == "" or str(raw_sub_val).strip().lower() == "nan":
@@ -129,8 +137,8 @@ try:
 
   selected_prov = st.sidebar.multiselect(
       "Pilih Provinsi",
-      options=df["Provinsi"].dropna().unique(),
-      default=df["Provinsi"].dropna().unique(),
+      options=df["Provinsi"].dropna().unique() if "Provinsi" in df.columns else [],
+      default=df["Provinsi"].dropna().unique() if "Provinsi" in df.columns else [],
   )
 
   selected_status = st.sidebar.multiselect(
@@ -139,10 +147,11 @@ try:
       default=df["Status Aging Pelaporan"].unique(),
   )
 
-  df_filtered = df[
-      (df["Provinsi"].isin(selected_prov))
-      & (df["Status Aging Pelaporan"].isin(selected_status))
-  ]
+  df_filtered = df.copy()
+  if "Provinsi" in df.columns and selected_prov:
+    df_filtered = df_filtered[df_filtered["Provinsi"].isin(selected_prov)]
+  if selected_status:
+    df_filtered = df_filtered[df_filtered["Status Aging Pelaporan"].isin(selected_status)]
 
   # ---------------------------------------------------------
   # 4. Top Metric Scoreboard
@@ -203,21 +212,24 @@ try:
 
   with c2:
     st.subheader("📈 Rata-Rata Aging per Provinsi")
-    df_avg = (
-        df_filtered.groupby("Provinsi")[
-            ["Aging Incident (Hari)", "Aging Pelaporan (Hari)"]
-        ]
-        .mean()
-        .reset_index()
-    )
-    fig_bar = px.bar(
-        df_avg,
-        x="Provinsi",
-        y=["Aging Incident (Hari)", "Aging Pelaporan (Hari)"],
-        barmode="group",
-        title="Rata-rata Aging Incident vs Pelaporan",
-    )
-    st.plotly_chart(fig_bar, use_container_width=True)
+    if "Provinsi" in df_filtered.columns:
+      df_avg = (
+          df_filtered.groupby("Provinsi")[
+              ["Aging Incident (Hari)", "Aging Pelaporan (Hari)"]
+          ]
+          .mean()
+          .reset_index()
+      )
+      fig_bar = px.bar(
+          df_avg,
+          x="Provinsi",
+          y=["Aging Incident (Hari)", "Aging Pelaporan (Hari)"],
+          barmode="group",
+          title="Rata-rata Aging Incident vs Pelaporan",
+      )
+      st.plotly_chart(fig_bar, use_container_width=True)
+    else:
+      st.info("Kolom Provinsi tidak ditemukan pada data.")
 
   # ---------------------------------------------------------
   # 6. Tabel Detail dengan 2 Filter (Status Aging & Status Submission)
