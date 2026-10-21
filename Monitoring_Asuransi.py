@@ -90,7 +90,7 @@ def load_and_process_google_sheet():
       get_pelaporan_status
   )
 
-  # C. Status & Aging Submission (Revisi: Asal terisi, masuk Sudah Submit)
+  # C. Status & Aging Submission 
   def get_submission_info(row):
     raw_sub_val = row[col_submit_date] if col_submit_date else None
     parsed_sub = row["_Submit_Parsed"]
@@ -295,4 +295,3 @@ try:
 except Exception as e:
   st.error("Terjadi kendala pada script dashboard:")
   st.exception(e)
-```[cite: 1]
