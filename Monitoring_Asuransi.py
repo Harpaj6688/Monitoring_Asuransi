@@ -47,13 +47,19 @@ def load_and_process_google_sheet():
   df = pd.read_csv(CSV_URL)
   df.columns = df.columns.astype(str).str.strip()
 
-  # Deteksi kolom fleksibel
+  # Deteksi kolom fleksibel untuk Tanggal Insiden
   incident_candidates = [c for c in df.columns if any(k in c.lower() for k in ["insiden", "kejadian", "incident"])]
   col_incident = incident_candidates[0] if incident_candidates else "Tanggal Insiden"
 
+  # Jika tidak ketemu lewat keyword, ambil kolom ke-6 atau yang mirip tanggal
+  if col_incident not in df.columns:
+    col_incident = df.columns[5] if len(df.columns) > 5 else df.columns[0]
+
+  # Deteksi kolom Pelaporan Polisi
   lappol_candidates = [c for c in df.columns if any(k in c.lower() for k in ["polisi", "lappol", "lap_pol"])]
   col_lappol = lappol_candidates[0] if lappol_candidates else "Tanggal Pelaporan Kepolisian"
 
+  # Deteksi kolom Tanggal Submission
   submit_candidates = [c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])]
   col_submit_date = submit_candidates[0] if submit_candidates else None
 
@@ -78,13 +84,16 @@ def load_and_process_google_sheet():
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
 
-  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini)
+  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini) - Memastikan menggunakan _Insiden_Valid / _Insiden_Parsed
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
+  # Fallback jika _Insiden_Valid kosong tapi parsed ada isinya
+  mask_fallback = df["Aging Incident (Hari)"].isna() & df["_Insiden_Parsed"].notna()
+  df.loc[mask_fallback, "Aging Incident (Hari)"] = (today - df.loc[mask_fallback, "_Insiden_Parsed"]).dt.days
 
   # B. Cek status submission
   def get_submission_status(row):
     raw_sub_val = row[col_submit_date] if (col_submit_date and col_submit_date in df.columns) else None
-    parsed_sub = row["_Submit_Valid"]
+    parsed_sub = row["_Submit_Parsed"]
 
     if pd.isna(raw_sub_val) or str(raw_sub_val).strip() == "" or str(raw_sub_val).strip().lower() == "nan":
       return "Belum Submit"
@@ -116,6 +125,8 @@ def load_and_process_google_sheet():
 
   # D. Aging Pelaporan Polisi & Aging Submission
   df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Valid"]).dt.days
+  mask_lappol_fb = df["Aging Pelaporan (Hari)"].isna() & df["_LapPol_Parsed"].notna()
+  df.loc[mask_lappol_fb, "Aging Pelaporan (Hari)"] = (today - df.loc[mask_lappol_fb, "_LapPol_Parsed"]).dt.days
   
   def get_aging_sub_val(row):
     parsed_sub = row["_Submit_Valid"]
