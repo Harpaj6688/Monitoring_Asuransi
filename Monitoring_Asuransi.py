@@ -22,7 +22,7 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&
 
 
 # ---------------------------------------------------------
-# 2. Function Parsing Tanggal Super Agresif (Support Bulan Indo/Eng)
+# 2. Function Parsing Tanggal Super Agresif
 # ---------------------------------------------------------
 def parse_mixed_date(date_val):
   if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() in ["nan", "none", "-"]:
@@ -260,10 +260,10 @@ try:
       st.info("Kolom Provinsi tidak ditemukan pada data.")
 
   # ---------------------------------------------------------
-  # Analisis Top 5 Material Kehilangan & BOQ (Fix Nilai Harga)
+  # Analisis Top Material Kehilangan & Top 10 BOQ Termahal
   # ---------------------------------------------------------
   st.markdown("---")
-  st.subheader("🛠️ Analisis Top 5 Material Kehilangan & BOQ")
+  st.subheader("🛠️ Analisis Material Kehilangan & Nilai BOQ Termahal")
 
   material_cols = [
       c for c in df.columns 
@@ -293,7 +293,7 @@ try:
           top5_mat, 
           x='Material', 
           y='Jumlah', 
-          title="Top Material Kehilangan",
+          title="Top 5 Material Kehilangan Terbanyak",
           text='Jumlah',
           color='Jumlah',
           color_continuous_scale='Blues'
@@ -304,10 +304,9 @@ try:
 
   with mc2:
     if col_mat and col_price:
-      st.markdown(f"##### Tabel: Top Material BOQ ({col_price})")
+      st.markdown(f"##### Tabel: Top 10 Material BOQ Termahal ({col_price})")
       df_boq = df_filtered.copy()
       
-      # Pembersihan string Rupiah yang agresif agar terbaca sebagai angka
       df_boq[col_price] = (
           df_boq[col_price].astype(str)
           .str.replace('Rp', '', case=False, regex=False)
@@ -316,12 +315,11 @@ try:
       )
       df_boq[col_price] = pd.to_numeric(df_boq[col_price], errors='coerce')
       
-      # Groupby dan sum untuk mendapatkan total nilai BOQ per material
       boq_summary = df_boq.groupby(col_mat)[col_price].sum().reset_index()
       boq_summary.columns = ['Material', 'Total Nilai BOQ']
-      top5_boq = boq_summary.sort_values(by='Total Nilai BOQ', ascending=False).head(5)
+      top10_boq = boq_summary.sort_values(by='Total Nilai BOQ', ascending=False).head(10).reset_index(drop=True)
       
-      st.dataframe(top5_boq.style.format({'Total Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True)
+      st.dataframe(top10_boq.style.format({'Total Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True, height=380)
     else:
       st.info("Kolom Nilai/Harga BOQ belum terdeteksi secara otomatis.")
 
