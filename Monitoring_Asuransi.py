@@ -279,7 +279,7 @@ try:
       st.info("Kolom Nilai/Harga BOQ belum terdeteksi secara otomatis.")
 
   # ---------------------------------------------------------
-  # 6. Tabel Detail dengan 2 Filter
+  # 6. Tabel Detail dengan 2 Filter & Scoreboard Total BOQ di Bawah
   # ---------------------------------------------------------
   st.markdown("---")
   st.subheader("📋 Detail Status & Aging Site (Form Original Columns)")
@@ -362,6 +362,26 @@ try:
       use_container_width=True,
       height=500,
   )
+
+  # Hitung Total Nilai BOQ dari data yang sedang tampil di tabel detail
+  if col_price and col_price in df_table_final.columns:
+    temp_boq_series = (
+        df_table_final[col_price].astype(str)
+        .str.replace('Rp', '', case=False, regex=False)
+        .str.replace('.', '', regex=False)
+        .str.replace(',', '.', regex=False)
+    )
+    total_boq_value = pd.to_numeric(temp_boq_series, errors='coerce').sum()
+  else:
+    total_boq_value = 0.0
+
+  # Scoreboard Kecil di Bawah Tabel
+  b1, b2, b3 = st.columns([1, 2, 1])
+  with b2:
+    st.metric(
+        label="💰 Total Keseluruhan Nilai BOQ (Filtered Data)", 
+        value=f"Rp {total_boq_value:,.2f}"
+    )
 
 except Exception as e:
   st.error("Terjadi kendala pada script dashboard:")
