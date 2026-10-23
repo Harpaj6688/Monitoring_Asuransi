@@ -275,11 +275,18 @@ try:
       top10_boq = boq_summary.sort_values(by='Total Nilai BOQ', ascending=False).head(10).reset_index(drop=True)
       
       st.dataframe(top10_boq.style.format({'Total Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True, height=380)
+
+      # Total Nilai BOQ dari seluruh data terfilter (ditaruh tepat di bawah tabel Top 10 BOQ)
+      total_boq_value = df_boq[col_price].sum()
+      st.metric(
+          label="💰 Total Keseluruhan Nilai Claim BOQ", 
+          value=f"Rp {total_boq_value:,.2f}"
+      )
     else:
       st.info("Kolom Nilai/Harga BOQ belum terdeteksi secara otomatis.")
 
   # ---------------------------------------------------------
-  # 6. Tabel Detail dengan 2 Filter & Scoreboard Total BOQ di Bawah
+  # 6. Tabel Detail dengan 2 Filter
   # ---------------------------------------------------------
   st.markdown("---")
   st.subheader("📋 Detail Status & Aging Site (Form Original Columns)")
@@ -362,26 +369,6 @@ try:
       use_container_width=True,
       height=500,
   )
-
-  # Hitung Total Nilai BOQ dari data yang sedang tampil di tabel detail
-  if col_price and col_price in df_table_final.columns:
-    temp_boq_series = (
-        df_table_final[col_price].astype(str)
-        .str.replace('Rp', '', case=False, regex=False)
-        .str.replace('.', '', regex=False)
-        .str.replace(',', '.', regex=False)
-    )
-    total_boq_value = pd.to_numeric(temp_boq_series, errors='coerce').sum()
-  else:
-    total_boq_value = 0.0
-
-  # Scoreboard Kecil di Bawah Tabel
-  b1, b2, b3 = st.columns([1, 2, 1])
-  with b2:
-    st.metric(
-        label="💰 Total Keseluruhan Nilai BOQ (Filtered Data)", 
-        value=f"Rp {total_boq_value:,.2f}"
-    )
 
 except Exception as e:
   st.error("Terjadi kendala pada script dashboard:")
