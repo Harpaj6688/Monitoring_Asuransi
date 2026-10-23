@@ -30,7 +30,6 @@ def parse_mixed_date(date_val):
   
   date_str = str(date_val).strip().split()[0]
 
-  # Mapping singkatan bulan Indonesia & Inggris ke angka bulan
   month_map = {
       '-jan-': '-01-', '-feb-': '-02-', '-mar-': '-03-', '-apr-': '-04-', '-mei-': '-05-', '-jun-': '-06-',
       '-jul-': '-07-', '-agu-': '-08-', '-agt-': '-08-', '-sep-': '-09-', '-okt-': '-10-', '-oct-': '-10-',
@@ -43,7 +42,6 @@ def parse_mixed_date(date_val):
       lower_str = lower_str.replace(k, v)
       break
 
-  # Coba parsing string yang sudah dinormalisasi bulannya
   for fmt in ("%d-%m-%Y", "%d-%m-%y", "%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y"):
     try:
       parsed = pd.to_datetime(lower_str, format=fmt)
@@ -52,7 +50,6 @@ def parse_mixed_date(date_val):
     except (ValueError, TypeError):
       continue
 
-  # Coba berbagai format standar lainnya
   for fmt in (
       "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d-%m-%y", "%y-%m-%d",
       "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %B %Y", "%b %d, %Y"
@@ -64,7 +61,6 @@ def parse_mixed_date(date_val):
     except (ValueError, TypeError):
       continue
 
-  # Fallback terakhir menggunakan inferensi cerdas pandas
   try:
     parsed = pd.to_datetime(date_str, errors="coerce", dayfirst=True)
     if not pd.isna(parsed):
@@ -80,19 +76,15 @@ def load_and_process_google_sheet():
   df = pd.read_csv(CSV_URL)
   df.columns = df.columns.astype(str).str.strip()
 
-  # Deteksi kolom Tanggal Insiden
   incident_candidates = [c for c in df.columns if any(k in c.lower() for k in ["insiden", "kejadian", "incident"])]
   col_incident = incident_candidates[0] if incident_candidates else (df.columns[5] if len(df.columns) > 5 else df.columns[0])
 
-  # Deteksi kolom Pelaporan Polisi
   lappol_candidates = [c for c in df.columns if any(k in c.lower() for k in ["polisi", "lappol", "lap_pol"])]
   col_lappol = lappol_candidates[0] if lappol_candidates else (df.columns[7] if len(df.columns) > 7 else df.columns[1])
 
-  # Deteksi kolom Tanggal Submission
   submit_candidates = [c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])]
   col_submit_date = submit_candidates[0] if submit_candidates else None
 
-  # Eksekusi Parsing Tanggal
   df["_Insiden_Parsed"] = df[col_incident].apply(parse_mixed_date) if col_incident in df.columns else pd.NaT
   df["_LapPol_Parsed"] = df[col_lappol].apply(parse_mixed_date) if col_lappol in df.columns else pd.NaT
 
@@ -113,13 +105,13 @@ def load_and_process_google_sheet():
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
 
-  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini)
+  # A. Aging Incident
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Parsed"]).dt.days
   df["Aging Incident (Hari)"] = df["Aging Incident (Hari)"].apply(
       lambda x: x if pd.notna(x) and x >= 0 else np.nan
   )
 
-  # B. Cek status submission
+  # B. Status submission
   def get_submission_status(row):
     raw_sub_val = row[col_submit_date] if (col_submit_date and col_submit_date in df.columns) else None
     parsed_sub = row["_Submit_Parsed"]
@@ -132,7 +124,7 @@ def load_and_process_google_sheet():
 
   df["Status Submission"] = df.apply(get_submission_status, axis=1)
 
-  # C. Klasifikasi Status Aging / Scoreboard:
+  # C. Scoreboard Status
   def get_scoreboard_status(row):
     sub_stat = row["Status Submission"]
     aging = row["Aging Incident (Hari)"]
@@ -152,7 +144,7 @@ def load_and_process_google_sheet():
 
   df["Status Aging Pelaporan"] = df.apply(get_scoreboard_status, axis=1)
 
-  # D. Aging Pelaporan Polisi & Aging Submission
+  # D. Aging Pelaporan & Submission
   df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Parsed"]).dt.days
   df["Aging Pelaporan (Hari)"] = df["Aging Pelaporan (Hari)"].apply(
       lambda x: x if pd.notna(x) and x >= 0 else np.nan
@@ -268,7 +260,7 @@ try:
       st.info("Kolom Provinsi tidak ditemukan pada data.")
 
   # ---------------------------------------------------------
-  # Analisis Top 5 Material Kehilangan & BOQ
+  # Analisis Top 5 Material Kehilangan & BOQ (Fix Nilai Harga)
   # ---------------------------------------------------------
   st.markdown("---")
   st.subheader("🛠️ Analisis Top 5 Material Kehilangan & BOQ")
@@ -314,16 +306,22 @@ try:
     if col_mat and col_price:
       st.markdown(f"##### Tabel: Top Material BOQ ({col_price})")
       df_boq = df_filtered.copy()
-      df_boq[col_price] = pd.to_numeric(
-          df_boq[col_price].astype(str).str.replace(r'[^0-9.]', '', regex=True), 
-          errors='coerce'
+      
+      # Pembersihan string Rupiah yang agresif agar terbaca sebagai angka
+      df_boq[col_price] = (
+          df_boq[col_price].astype(str)
+          .str.replace('Rp', '', case=False, regex=False)
+          .str.replace('.', '', regex=False)
+          .str.replace(',', '.', regex=False)
       )
+      df_boq[col_price] = pd.to_numeric(df_boq[col_price], errors='coerce')
       
-      boq_summary = df_boq.groupby(col_mat)[col_price].mean().reset_index()
-      boq_summary.columns = ['Material', 'Harga/Nilai BOQ']
-      top5_boq = boq_summary.sort_values(by='Harga/Nilai BOQ', ascending=False).head(5)
+      # Groupby dan sum untuk mendapatkan total nilai BOQ per material
+      boq_summary = df_boq.groupby(col_mat)[col_price].sum().reset_index()
+      boq_summary.columns = ['Material', 'Total Nilai BOQ']
+      top5_boq = boq_summary.sort_values(by='Total Nilai BOQ', ascending=False).head(5)
       
-      st.dataframe(top5_boq.style.format({'Harga/Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True)
+      st.dataframe(top5_boq.style.format({'Total Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True)
     else:
       st.info("Kolom Nilai/Harga BOQ belum terdeteksi secara otomatis.")
 
