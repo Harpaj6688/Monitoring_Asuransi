@@ -35,7 +35,7 @@ def parse_mixed_date(date_val):
     pass
 
   date_str = str(date_val).strip().split()[0]
-  for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d-%m-%y"):
+  for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d-%m-%y", "%d-%b-%Y", "%d-%b-%y"):
     try:
       return pd.to_datetime(date_str, format=fmt)
     except (ValueError, TypeError):
@@ -57,7 +57,7 @@ def load_and_process_google_sheet():
   submit_candidates = [c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])]
   col_submit_date = submit_candidates[0] if submit_candidates else None
 
-  # Eksekusi Parsing Tanggal
+  # Eksekusi Parsing Tanggal secara aman
   df["_Insiden_Parsed"] = df[col_incident].apply(parse_mixed_date) if col_incident in df.columns else pd.NaT
   df["_LapPol_Parsed"] = df[col_lappol].apply(parse_mixed_date) if col_lappol in df.columns else pd.NaT
 
@@ -74,6 +74,9 @@ def load_and_process_google_sheet():
   df["_LapPol_Valid"] = df["_LapPol_Parsed"].apply(
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
+  df["_Submit_Valid"] = df["_Submit_Parsed"].apply(
+      lambda x: x if pd.isna(x) or x <= today else pd.NaT
+  )
 
   # A. Aging Incident (Hari dari Insiden s.d. Hari Ini)
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
@@ -81,7 +84,7 @@ def load_and_process_google_sheet():
   # B. Cek status submission
   def get_submission_status(row):
     raw_sub_val = row[col_submit_date] if (col_submit_date and col_submit_date in df.columns) else None
-    parsed_sub = row["_Submit_Parsed"]
+    parsed_sub = row["_Submit_Valid"]
 
     if pd.isna(raw_sub_val) or str(raw_sub_val).strip() == "" or str(raw_sub_val).strip().lower() == "nan":
       return "Belum Submit"
@@ -115,8 +118,8 @@ def load_and_process_google_sheet():
   df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Valid"]).dt.days
   
   def get_aging_sub_val(row):
-    parsed_sub = row["_Submit_Parsed"]
-    if not pd.isna(parsed_sub) and parsed_sub <= today:
+    parsed_sub = row["_Submit_Valid"]
+    if not pd.isna(parsed_sub):
       return (today - parsed_sub).days
     return np.nan
 
@@ -222,19 +225,17 @@ try:
       st.info("Kolom Provinsi tidak ditemukan pada data.")
 
   # ---------------------------------------------------------
-  # Analisis Top 5 Material Kehilangan & BOQ (Aman dari Kolom Link/Upload)
+  # Analisis Top 5 Material Kehilangan & BOQ
   # ---------------------------------------------------------
   st.markdown("---")
   st.subheader("🛠️ Analisis Top 5 Material Kehilangan & BOQ")
 
-  # Filter ketat: cari kolom material/barang, TAPI KECUALIKAN yang mengandung kata 'upload', 'link', atau 'url'
   material_cols = [
       c for c in df.columns 
       if any(k in c.lower() for k in ["material", "barang", "item", "perangkat", "kerugian"])
       and not any(exc in c.lower() for exc in ["upload", "link", "url", "pdf", "berita", "surat"])
   ]
   
-  # Cari kolom harga BOQ/cost/nilai
   boq_price_cols = [
       c for c in df.columns 
       if any(k in c.lower() for k in ["boq", "harga", "cost", "nilai", "amount", "total"])
