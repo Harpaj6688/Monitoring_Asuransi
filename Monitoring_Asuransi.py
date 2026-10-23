@@ -92,11 +92,6 @@ def load_and_process_google_sheet():
   df["Status Submission"] = df.apply(get_submission_status, axis=1)
 
   # C. Klasifikasi Status Aging / Scoreboard Berdasarkan Aturan Baru:
-  # - Jika Sudah Submit -> "Sudah Submit Asuransi"
-  # - Jika Belum Submit:
-  #     * aging > 30 -> "Expired"
-  #     * aging > 14 s/d 30 -> "Warning (Submit Soon)"
-  #     * aging < 14 -> "Prepare submit"
   def get_scoreboard_status(row):
     sub_stat = row["Status Submission"]
     aging = row["Aging Incident (Hari)"]
@@ -161,15 +156,13 @@ try:
     df_filtered = df_filtered[df_filtered["Status Aging Pelaporan"].isin(selected_status)]
 
   # ---------------------------------------------------------
-  # 4. Top Metric Scoreboard Sesuai Permintaan Baru
+  # 4. Top Metric Scoreboard
   # ---------------------------------------------------------
   total_site = len(df_filtered)
   count_prepare = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Prepare submit"])
   count_warning = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Warning (Submit Soon)"])
   count_expired = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Expired"])
   count_sudah_submit = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Sudah Submit Asuransi"])
-  
-  # Reminding Harus Dikirim (Semua yang belum submit / belum ada date submission)
   count_reminder = len(df_filtered[df_filtered["Status Submission"] == "Belum Submit"])
 
   m1, m2, m3, m4 = st.columns(4)
@@ -229,13 +222,24 @@ try:
       st.info("Kolom Provinsi tidak ditemukan pada data.")
 
   # ---------------------------------------------------------
-  # Tambahan Chart & Tabel Top 5 Material Kehilangan & BOQ
+  # Analisis Top 5 Material Kehilangan & BOQ (Aman dari Kolom Link/Upload)
   # ---------------------------------------------------------
   st.markdown("---")
   st.subheader("🛠️ Analisis Top 5 Material Kehilangan & BOQ")
 
-  material_cols = [c for c in df.columns if any(k in c.lower() for k in ["material", "barang", "item", "perangkat"])]
-  boq_price_cols = [c for c in df.columns if any(k in c.lower() for k in ["boq", "harga", "cost", "nilai", "amount", "total"])]
+  # Filter ketat: cari kolom material/barang, TAPI KECUALIKAN yang mengandung kata 'upload', 'link', atau 'url'
+  material_cols = [
+      c for c in df.columns 
+      if any(k in c.lower() for k in ["material", "barang", "item", "perangkat", "kerugian"])
+      and not any(exc in c.lower() for exc in ["upload", "link", "url", "pdf", "berita", "surat"])
+  ]
+  
+  # Cari kolom harga BOQ/cost/nilai
+  boq_price_cols = [
+      c for c in df.columns 
+      if any(k in c.lower() for k in ["boq", "harga", "cost", "nilai", "amount", "total"])
+      and not any(exc in c.lower() for exc in ["upload", "link", "url"])
+  ]
 
   col_mat = material_cols[0] if material_cols else None
   col_price = boq_price_cols[0] if boq_price_cols else None
@@ -244,7 +248,7 @@ try:
 
   with mc1:
     if col_mat and col_mat in df_filtered.columns:
-      st.markdown("##### Bar Chart: Top 5 Material Kehilangan Terbanyak")
+      st.markdown(f"##### Bar Chart: Top Material Berdasarkan ({col_mat})")
       top_materials = df_filtered[col_mat].value_counts().reset_index()
       top_materials.columns = ['Material', 'Jumlah']
       top5_mat = top_materials.head(5)
@@ -253,18 +257,18 @@ try:
           top5_mat, 
           x='Material', 
           y='Jumlah', 
-          title="Top 5 Material Kehilangan",
+          title="Top Material Kehilangan",
           text='Jumlah',
           color='Jumlah',
           color_continuous_scale='Blues'
       )
       st.plotly_chart(fig_mat, use_container_width=True)
     else:
-      st.info("Kolom kategori Material Kehilangan tidak terdeteksi secara otomatis di Google Sheet.")
+      st.info("Kolom kategori Material Kehilangan spesifik belum terdeteksi pada form Google Sheet.")
 
   with mc2:
     if col_mat and col_price:
-      st.markdown("##### Tabel: Top 5 Material BOQ (Mahal ke Murah)")
+      st.markdown(f"##### Tabel: Top Material BOQ ({col_price})")
       df_boq = df_filtered.copy()
       df_boq[col_price] = pd.to_numeric(
           df_boq[col_price].astype(str).str.replace(r'[^0-9.]', '', regex=True), 
@@ -277,7 +281,7 @@ try:
       
       st.dataframe(top5_boq.style.format({'Harga/Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True)
     else:
-      st.info("Kolom Material atau Nilai/Harga BOQ tidak terdeteksi secara otomatis.")
+      st.info("Kolom Nilai/Harga BOQ belum terdeteksi secara otomatis.")
 
   # ---------------------------------------------------------
   # 6. Tabel Detail dengan 2 Filter
