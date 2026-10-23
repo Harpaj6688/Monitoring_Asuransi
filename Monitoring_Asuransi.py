@@ -22,26 +22,35 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&
 
 
 # ---------------------------------------------------------
-# 2. Function Parsing Tanggal & Kalkulasi Aging
+# 2. Function Parsing Tanggal Super Agresif
 # ---------------------------------------------------------
 def parse_mixed_date(date_val):
-  if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() == "nan":
+  if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() in ["nan", "none", "-"]:
     return pd.NaT
   
+  date_str = str(date_val).strip().split()[0]
+
+  # Coba berbagai format string tanggal secara berurutan (termasuk singkatan bulan bahasa Inggris & Indonesia)
+  for fmt in (
+      "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d-%m-%y", "%y-%m-%d",
+      "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%d-%B-%Y"
+  ):
+    try:
+      parsed = pd.to_datetime(date_str, format=fmt)
+      if not pd.isna(parsed):
+        return parsed
+    except (ValueError, TypeError):
+      continue
+
+  # Fallback terakhir menggunakan inferensi cerdas pandas (dayfirst=True untuk format DD/MM)
   try:
-    parsed = pd.to_datetime(date_val, errors="coerce", dayfirst=True)
+    parsed = pd.to_datetime(date_str, errors="coerce", dayfirst=True)
     if not pd.isna(parsed):
       return parsed
   except Exception:
     pass
 
-  date_str = str(date_val).strip().split()[0]
-  for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d-%m-%y", "%d-%b-%Y", "%d-%b-%y"):
-    try:
-      return pd.to_datetime(date_str, format=fmt)
-    except (ValueError, TypeError):
-      continue
-  return pd.to_datetime(date_str, dayfirst=True, errors="coerce")
+  return pd.NaT
 
 
 @st.cache_data(ttl=30)
@@ -49,13 +58,15 @@ def load_and_process_google_sheet():
   df = pd.read_csv(CSV_URL)
   df.columns = df.columns.astype(str).str.strip()
 
-  # Deteksi kolom Tanggal Insiden secara aman (berdasarkan keyword atau fallback ke indeks kolom)
+  # Deteksi kolom Tanggal Insiden
   incident_candidates = [c for c in df.columns if any(k in c.lower() for k in ["insiden", "kejadian", "incident"])]
   col_incident = incident_candidates[0] if incident_candidates else (df.columns[5] if len(df.columns) > 5 else df.columns[0])
 
+  # Deteksi kolom Pelaporan Polisi
   lappol_candidates = [c for c in df.columns if any(k in c.lower() for k in ["polisi", "lappol", "lap_pol"])]
   col_lappol = lappol_candidates[0] if lappol_candidates else (df.columns[7] if len(df.columns) > 7 else df.columns[1])
 
+  # Deteksi kolom Tanggal Submission
   submit_candidates = [c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])]
   col_submit_date = submit_candidates[0] if submit_candidates else None
 
@@ -80,17 +91,18 @@ def load_and_process_google_sheet():
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
 
-  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini)
-  df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
-  mask_fb = df["Aging Incident (Hari)"].isna() & df["_Insiden_Parsed"].notna()
-  df.loc[mask_fb, "Aging Incident (Hari)"] = (today - df.loc[mask_fb, "_Insiden_Parsed"]).dt.days
+  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini) - Menggunakan _Insiden_Parsed langsung agar tanggal baru pasti terhitung
+  df["Aging Incident (Hari)"] = (today - df["_Insiden_Parsed"]).dt.days
+  df["Aging Incident (Hari)"] = df["Aging Incident (Hari)"].apply(
+      lambda x: x if pd.notna(x) and x >= 0 else np.nan
+  )
 
   # B. Cek status submission
   def get_submission_status(row):
     raw_sub_val = row[col_submit_date] if (col_submit_date and col_submit_date in df.columns) else None
     parsed_sub = row["_Submit_Parsed"]
 
-    if pd.isna(raw_sub_val) or str(raw_sub_val).strip() == "" or str(raw_sub_val).strip().lower() == "nan":
+    if pd.isna(raw_sub_val) or str(raw_sub_val).strip() == "" or str(raw_sub_val).strip().lower() in ["nan", "none", "-"]:
       return "Belum Submit"
     if not pd.isna(parsed_sub) and parsed_sub > today:
       return "Salah Input Tanggal"
@@ -119,14 +131,16 @@ def load_and_process_google_sheet():
   df["Status Aging Pelaporan"] = df.apply(get_scoreboard_status, axis=1)
 
   # D. Aging Pelaporan Polisi & Aging Submission
-  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Valid"]).dt.days
-  mask_lappol_fb = df["Aging Pelaporan (Hari)"].isna() & df["_LapPol_Parsed"].notna()
-  df.loc[mask_lappol_fb, "Aging Pelaporan (Hari)"] = (today - df.loc[mask_lappol_fb, "_LapPol_Parsed"]).dt.days
+  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Parsed"]).dt.days
+  df["Aging Pelaporan (Hari)"] = df["Aging Pelaporan (Hari)"].apply(
+      lambda x: x if pd.notna(x) and x >= 0 else np.nan
+  )
   
   def get_aging_sub_val(row):
-    parsed_sub = row["_Submit_Valid"]
+    parsed_sub = row["_Submit_Parsed"]
     if not pd.isna(parsed_sub):
-      return (today - parsed_sub).days
+      val = (today - parsed_sub).days
+      return max(0, val)
     return np.nan
 
   df["Aging Submission (Hari)"] = df.apply(get_aging_sub_val, axis=1)
