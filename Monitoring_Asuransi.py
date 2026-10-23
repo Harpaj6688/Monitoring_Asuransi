@@ -22,7 +22,7 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&
 
 
 # ---------------------------------------------------------
-# 2. Function Parsing Tanggal Super Agresif
+# 2. Function Parsing Tanggal Super Agresif (Support Bulan Indo/Eng)
 # ---------------------------------------------------------
 def parse_mixed_date(date_val):
   if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() in ["nan", "none", "-"]:
@@ -30,10 +30,32 @@ def parse_mixed_date(date_val):
   
   date_str = str(date_val).strip().split()[0]
 
-  # Coba berbagai format string tanggal secara berurutan (termasuk singkatan bulan bahasa Inggris & Indonesia)
+  # Mapping singkatan bulan Indonesia & Inggris ke angka bulan
+  month_map = {
+      '-jan-': '-01-', '-feb-': '-02-', '-mar-': '-03-', '-apr-': '-04-', '-mei-': '-05-', '-jun-': '-06-',
+      '-jul-': '-07-', '-agu-': '-08-', '-agt-': '-08-', '-sep-': '-09-', '-okt-': '-10-', '-oct-': '-10-',
+      '-nov-': '-11-', '-des-': '-12-', '-dec-': '-12-'
+  }
+  
+  lower_str = date_str.lower()
+  for k, v in month_map.items():
+    if k in lower_str:
+      lower_str = lower_str.replace(k, v)
+      break
+
+  # Coba parsing string yang sudah dinormalisasi bulannya
+  for fmt in ("%d-%m-%Y", "%d-%m-%y", "%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y"):
+    try:
+      parsed = pd.to_datetime(lower_str, format=fmt)
+      if not pd.isna(parsed):
+        return parsed
+    except (ValueError, TypeError):
+      continue
+
+  # Coba berbagai format standar lainnya
   for fmt in (
       "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d-%m-%y", "%y-%m-%d",
-      "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %B %Y", "%b %d, %Y", "%d-%B-%Y"
+      "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %B %Y", "%b %d, %Y"
   ):
     try:
       parsed = pd.to_datetime(date_str, format=fmt)
@@ -42,7 +64,7 @@ def parse_mixed_date(date_val):
     except (ValueError, TypeError):
       continue
 
-  # Fallback terakhir menggunakan inferensi cerdas pandas (dayfirst=True untuk format DD/MM)
+  # Fallback terakhir menggunakan inferensi cerdas pandas
   try:
     parsed = pd.to_datetime(date_str, errors="coerce", dayfirst=True)
     if not pd.isna(parsed):
@@ -91,7 +113,7 @@ def load_and_process_google_sheet():
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
 
-  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini) - Menggunakan _Insiden_Parsed langsung agar tanggal baru pasti terhitung
+  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini)
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Parsed"]).dt.days
   df["Aging Incident (Hari)"] = df["Aging Incident (Hari)"].apply(
       lambda x: x if pd.notna(x) and x >= 0 else np.nan
