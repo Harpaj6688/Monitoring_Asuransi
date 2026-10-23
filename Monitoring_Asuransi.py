@@ -216,53 +216,8 @@ try:
   st.markdown("---")
 
   # ---------------------------------------------------------
-  # 5. Visualisasi Charts
+  # 5. Analisis Material Kehilangan & Top 10 BOQ Termahal
   # ---------------------------------------------------------
-  c1, c2 = st.columns(2)
-
-  with c1:
-    st.subheader("📊 Distribusi Status Scoreboard")
-    color_map = {
-        "Prepare submit": "#2ecc71",
-        "Warning (Submit Soon)": "#f1c40f",
-        "Expired": "#e74c3c",
-        "Sudah Submit Asuransi": "#3498db",
-        "Reminding Harus Dikirim (Belum Submit)": "#95a5a6",
-    }
-    fig_pie = px.pie(
-        df_filtered,
-        names="Status Aging Pelaporan",
-        color="Status Aging Pelaporan",
-        color_discrete_map=color_map,
-        hole=0.45,
-    )
-    st.plotly_chart(fig_pie, use_container_width=True)
-
-  with c2:
-    st.subheader("📈 Rata-Rata Aging per Provinsi")
-    if "Provinsi" in df_filtered.columns:
-      df_avg = (
-          df_filtered.groupby("Provinsi")[
-              ["Aging Incident (Hari)", "Aging Pelaporan (Hari)"]
-          ]
-          .mean()
-          .reset_index()
-      )
-      fig_bar = px.bar(
-          df_avg,
-          x="Provinsi",
-          y=["Aging Incident (Hari)", "Aging Pelaporan (Hari)"],
-          barmode="group",
-          title="Rata-rata Aging Incident vs Pelaporan",
-      )
-      st.plotly_chart(fig_bar, use_container_width=True)
-    else:
-      st.info("Kolom Provinsi tidak ditemukan pada data.")
-
-  # ---------------------------------------------------------
-  # Analisis Top Material Kehilangan & Top 10 BOQ Termahal
-  # ---------------------------------------------------------
-  st.markdown("---")
   st.subheader("🛠️ Analisis Material Kehilangan & Nilai BOQ Termahal")
 
   material_cols = [
