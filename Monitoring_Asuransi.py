@@ -20,7 +20,6 @@ SHEET_ID = "15jMIWecycZgWFJ4zWMRNp8FCT5umgqdok_hF2ByHTeQ"
 GID = "1414464208"
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID}"
 
-
 # ---------------------------------------------------------
 # 2. Function Parsing Tanggal & Kalkulasi Aging
 # ---------------------------------------------------------
@@ -28,7 +27,6 @@ def parse_mixed_date(date_val):
   if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() == "nan":
     return pd.NaT
   
-  # Coba parsing otomatis dengan pandas terlebih dahulu (sangat fleksibel)
   try:
     parsed = pd.to_datetime(date_val, errors="coerce", dayfirst=True)
     if not pd.isna(parsed):
@@ -44,13 +42,12 @@ def parse_mixed_date(date_val):
       continue
   return pd.to_datetime(date_str, dayfirst=True, errors="coerce")
 
-
 @st.cache_data(ttl=30)
 def load_and_process_google_sheet():
   df = pd.read_csv(CSV_URL)
   df.columns = df.columns.astype(str).str.strip()
 
-  # Deteksi kolom Tanggal Insiden secara fleksibel
+  # Deteksi kolom fleksibel
   incident_candidates = [c for c in df.columns if any(k in c.lower() for k in ["insiden", "kejadian", "incident"])]
   col_incident = incident_candidates[0] if incident_candidates else "Tanggal Insiden"
 
@@ -78,49 +75,59 @@ def load_and_process_google_sheet():
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
 
-  # A. Aging Incident & Status Berdasarkan Aging Incident (SLA Kategori Baru)
+  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini)
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
 
-  def get_insiden_status(aging):
-    if pd.isna(aging):
-      return "Belum Ada Insiden"
-    elif aging < 30:
-      return "Submit Asuransi Soon"
-    elif 30 <= aging <= 45:
-      return "Asuransi Diperjuangkan"
-    else:
-      return "Asuransi Expired"
-
-  df["Status Aging Pelaporan"] = df["Aging Incident (Hari)"].apply(
-      get_insiden_status
-  )
-
-  # B. Aging Pelaporan Polisi
-  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Valid"]).dt.days
-
-  # C. Status & Aging Submission
-  def get_submission_info(row):
+  # B. Cek status submission
+  def get_submission_status(row):
     raw_sub_val = row[col_submit_date] if (col_submit_date and col_submit_date in df.columns) else None
     parsed_sub = row["_Submit_Parsed"]
 
     if pd.isna(raw_sub_val) or str(raw_sub_val).strip() == "" or str(raw_sub_val).strip().lower() == "nan":
-      return "Belum Submit", np.nan
-    
+      return "Belum Submit"
     if not pd.isna(parsed_sub) and parsed_sub > today:
-      return "Salah Input Tanggal", np.nan
-    
-    if not pd.isna(parsed_sub):
-      aging_sub = (today - parsed_sub).days
-      return "Sudah Submit", max(0, aging_sub)
-    else:
-      return "Sudah Submit", 0
+      return "Salah Input Tanggal"
+    return "Sudah Submit"
 
-  sub_results = df.apply(get_submission_info, axis=1)
-  df["Status Submission"] = [res[0] for res in sub_results]
-  df["Aging Submission (Hari)"] = [res[1] for res in sub_results]
+  df["Status Submission"] = df.apply(get_submission_status, axis=1)
+
+  # C. Klasifikasi Status Aging / Scoreboard Berdasarkan Aturan Baru:
+  # - Jika Sudah Submit -> "Sudah Submit Asuransi"
+  # - Jika Belum Submit:
+  #     * aging > 30 -> "Expired"
+  #     * aging > 14 s/d 30 -> "Warning (Submit Soon)"
+  #     * aging < 14 -> "Prepare submit"
+  def get_scoreboard_status(row):
+    sub_stat = row["Status Submission"]
+    aging = row["Aging Incident (Hari)"]
+
+    if sub_stat == "Sudah Submit":
+      return "Sudah Submit Asuransi"
+    
+    if pd.isna(aging):
+      return "Reminding Harus Dikirim (Belum Submit)"
+    
+    if aging > 30:
+      return "Expired"
+    elif aging > 14:
+      return "Warning (Submit Soon)"
+    else:
+      return "Prepare submit"
+
+  df["Status Aging Pelaporan"] = df.apply(get_scoreboard_status, axis=1)
+
+  # D. Aging Pelaporan Polisi & Aging Submission
+  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Valid"]).dt.days
+  
+  def get_aging_sub_val(row):
+    parsed_sub = row["_Submit_Parsed"]
+    if not pd.isna(parsed_sub) and parsed_sub <= today:
+      return (today - parsed_sub).days
+    return np.nan
+
+  df["Aging Submission (Hari)"] = df.apply(get_aging_sub_val, axis=1)
 
   return df, today
-
 
 try:
   df, today_date = load_and_process_google_sheet()
@@ -142,7 +149,7 @@ try:
   )
 
   selected_status = st.sidebar.multiselect(
-      "Pilih Status Aging Insiden",
+      "Pilih Status Scoreboard",
       options=df["Status Aging Pelaporan"].unique(),
       default=df["Status Aging Pelaporan"].unique(),
   )
@@ -154,33 +161,22 @@ try:
     df_filtered = df_filtered[df_filtered["Status Aging Pelaporan"].isin(selected_status)]
 
   # ---------------------------------------------------------
-  # 4. Top Metric Scoreboard
+  # 4. Top Metric Scoreboard Sesuai Permintaan Baru
   # ---------------------------------------------------------
   total_site = len(df_filtered)
-  count_soon = len(
-      df_filtered[df_filtered["Status Aging Pelaporan"] == "Submit Asuransi Soon"]
-  )
-  count_diperjuangkan = len(
-      df_filtered[
-          df_filtered["Status Aging Pelaporan"] == "Asuransi Diperjuangkan"
-      ]
-  )
-  count_expired = len(
-      df_filtered[df_filtered["Status Aging Pelaporan"] == "Asuransi Expired"]
-  )
-
-  count_sudah_submit = len(
-      df_filtered[df_filtered["Status Submission"] == "Sudah Submit"]
-  )
-  count_reminder = len(
-      df_filtered[df_filtered["Status Submission"] == "Belum Submit"]
-  )
+  count_prepare = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Prepare submit"])
+  count_warning = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Warning (Submit Soon)"])
+  count_expired = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Expired"])
+  count_sudah_submit = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Sudah Submit Asuransi"])
+  
+  # Reminding Harus Dikirim (Semua yang belum submit / belum ada date submission)
+  count_reminder = len(df_filtered[df_filtered["Status Submission"] == "Belum Submit"])
 
   m1, m2, m3, m4 = st.columns(4)
   m1.metric("Total Site Insiden", f"{total_site} Site")
-  m2.metric("🟠 Submit Soon (<30 hr)", f"{count_soon} Site")
-  m3.metric("🟡 Diperjuangkan (30-45 hr)", f"{count_diperjuangkan} Site")
-  m4.metric("🔴 Expired (>=45 hr)", f"{count_expired} Site")
+  m2.metric("🟢 Prepare Submit (<14 hr)", f"{count_prepare} Site")
+  m3.metric("🟡 Warning / Submit Soon (>14-30 hr)", f"{count_warning} Site")
+  m4.metric("🔴 Expired (>30 hr)", f"{count_expired} Site")
 
   s1, s2 = st.columns(2)
   s1.metric("✅ Sudah Submit Asuransi", f"{count_sudah_submit} Site")
@@ -194,12 +190,13 @@ try:
   c1, c2 = st.columns(2)
 
   with c1:
-    st.subheader("📊 Distribusi Status Aging Insiden")
+    st.subheader("📊 Distribusi Status Scoreboard")
     color_map = {
-        "Submit Asuransi Soon": "#ff7f0e",
-        "Asuransi Diperjuangkan": "#f1c40f",
-        "Asuransi Expired": "#e74c3c",
-        "Belum Ada Insiden": "#95a5a6",
+        "Prepare submit": "#2ecc71",
+        "Warning (Submit Soon)": "#f1c40f",
+        "Expired": "#e74c3c",
+        "Sudah Submit Asuransi": "#3498db",
+        "Reminding Harus Dikirim (Belum Submit)": "#95a5a6",
     }
     fig_pie = px.pie(
         df_filtered,
@@ -232,8 +229,60 @@ try:
       st.info("Kolom Provinsi tidak ditemukan pada data.")
 
   # ---------------------------------------------------------
-  # 6. Tabel Detail dengan 2 Filter (Status Aging & Status Submission)
+  # Tambahan Chart & Tabel Top 5 Material Kehilangan & BOQ
   # ---------------------------------------------------------
+  st.markdown("---")
+  st.subheader("🛠️ Analisis Top 5 Material Kehilangan & BOQ")
+
+  material_cols = [c for c in df.columns if any(k in c.lower() for k in ["material", "barang", "item", "perangkat"])]
+  boq_price_cols = [c for c in df.columns if any(k in c.lower() for k in ["boq", "harga", "cost", "nilai", "amount", "total"])]
+
+  col_mat = material_cols[0] if material_cols else None
+  col_price = boq_price_cols[0] if boq_price_cols else None
+
+  mc1, mc2 = st.columns(2)
+
+  with mc1:
+    if col_mat and col_mat in df_filtered.columns:
+      st.markdown("##### Bar Chart: Top 5 Material Kehilangan Terbanyak")
+      top_materials = df_filtered[col_mat].value_counts().reset_index()
+      top_materials.columns = ['Material', 'Jumlah']
+      top5_mat = top_materials.head(5)
+      
+      fig_mat = px.bar(
+          top5_mat, 
+          x='Material', 
+          y='Jumlah', 
+          title="Top 5 Material Kehilangan",
+          text='Jumlah',
+          color='Jumlah',
+          color_continuous_scale='Blues'
+      )
+      st.plotly_chart(fig_mat, use_container_width=True)
+    else:
+      st.info("Kolom kategori Material Kehilangan tidak terdeteksi secara otomatis di Google Sheet.")
+
+  with mc2:
+    if col_mat and col_price:
+      st.markdown("##### Tabel: Top 5 Material BOQ (Mahal ke Murah)")
+      df_boq = df_filtered.copy()
+      df_boq[col_price] = pd.to_numeric(
+          df_boq[col_price].astype(str).str.replace(r'[^0-9.]', '', regex=True), 
+          errors='coerce'
+      )
+      
+      boq_summary = df_boq.groupby(col_mat)[col_price].mean().reset_index()
+      boq_summary.columns = ['Material', 'Harga/Nilai BOQ']
+      top5_boq = boq_summary.sort_values(by='Harga/Nilai BOQ', ascending=False).head(5)
+      
+      st.dataframe(top5_boq.style.format({'Harga/Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True)
+    else:
+      st.info("Kolom Material atau Nilai/Harga BOQ tidak terdeteksi secara otomatis.")
+
+  # ---------------------------------------------------------
+  # 6. Tabel Detail dengan 2 Filter
+  # ---------------------------------------------------------
+  st.markdown("---")
   st.subheader("📋 Detail Status & Aging Site (Form Original Columns)")
 
   col_f1, col_f2 = st.columns(2)
@@ -242,7 +291,7 @@ try:
         df_filtered["Status Aging Pelaporan"].unique()
     )
     table_status_filter = st.selectbox(
-        "🔍 1. Filter Berdasarkan Status Aging Insiden", unique_statuses
+        "🔍 1. Filter Berdasarkan Status Scoreboard", unique_statuses
     )
 
   with col_f2:
@@ -253,7 +302,6 @@ try:
         "🔍 2. Filter Berdasarkan Status Submission", unique_sub_statuses
     )
 
-  # Terapkan filter tabel
   df_table_final = df_filtered.copy()
   if table_status_filter != "Semua":
     df_table_final = df_table_final[
@@ -295,21 +343,17 @@ try:
       ).map(
           lambda val: (
               "background-color: #ffcdd2; color: #b71c1c; font-weight: bold;"
-              if val == "Asuransi Expired"
+              if val == "Expired"
               else (
                   "background-color: #fff9c4; color: #f57f17;"
-                  if val == "Asuransi Diperjuangkan"
+                  if val == "Warning (Submit Soon)"
                   else (
-                      "background-color: #ffe0b2; color: #e65100;"
-                      if val == "Submit Asuransi Soon"
+                      "background-color: #c8e6c9; color: #2e7d32;"
+                      if val in ["Prepare submit", "Sudah Submit Asuransi"]
                       else (
                           "background-color: #ffebee; color: #c62828;"
                           if val in ["Belum Submit", "Salah Input Tanggal"]
-                          else (
-                              "background-color: #c8e6c9; color: #2e7d32;"
-                              if val == "Sudah Submit"
-                              else ""
-                          )
+                          else ""
                       )
                   )
               )
