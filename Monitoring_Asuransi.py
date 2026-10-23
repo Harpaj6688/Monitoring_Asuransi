@@ -20,6 +20,7 @@ SHEET_ID = "15jMIWecycZgWFJ4zWMRNp8FCT5umgqdok_hF2ByHTeQ"
 GID = "1414464208"
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID}"
 
+
 # ---------------------------------------------------------
 # 2. Function Parsing Tanggal & Kalkulasi Aging
 # ---------------------------------------------------------
@@ -42,28 +43,23 @@ def parse_mixed_date(date_val):
       continue
   return pd.to_datetime(date_str, dayfirst=True, errors="coerce")
 
+
 @st.cache_data(ttl=30)
 def load_and_process_google_sheet():
   df = pd.read_csv(CSV_URL)
   df.columns = df.columns.astype(str).str.strip()
 
-  # Deteksi kolom fleksibel untuk Tanggal Insiden
+  # Deteksi kolom Tanggal Insiden secara aman (berdasarkan keyword atau fallback ke indeks kolom)
   incident_candidates = [c for c in df.columns if any(k in c.lower() for k in ["insiden", "kejadian", "incident"])]
-  col_incident = incident_candidates[0] if incident_candidates else "Tanggal Insiden"
+  col_incident = incident_candidates[0] if incident_candidates else (df.columns[5] if len(df.columns) > 5 else df.columns[0])
 
-  # Jika tidak ketemu lewat keyword, ambil kolom ke-6 atau yang mirip tanggal
-  if col_incident not in df.columns:
-    col_incident = df.columns[5] if len(df.columns) > 5 else df.columns[0]
-
-  # Deteksi kolom Pelaporan Polisi
   lappol_candidates = [c for c in df.columns if any(k in c.lower() for k in ["polisi", "lappol", "lap_pol"])]
-  col_lappol = lappol_candidates[0] if lappol_candidates else "Tanggal Pelaporan Kepolisian"
+  col_lappol = lappol_candidates[0] if lappol_candidates else (df.columns[7] if len(df.columns) > 7 else df.columns[1])
 
-  # Deteksi kolom Tanggal Submission
   submit_candidates = [c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])]
   col_submit_date = submit_candidates[0] if submit_candidates else None
 
-  # Eksekusi Parsing Tanggal secara aman
+  # Eksekusi Parsing Tanggal
   df["_Insiden_Parsed"] = df[col_incident].apply(parse_mixed_date) if col_incident in df.columns else pd.NaT
   df["_LapPol_Parsed"] = df[col_lappol].apply(parse_mixed_date) if col_lappol in df.columns else pd.NaT
 
@@ -84,11 +80,10 @@ def load_and_process_google_sheet():
       lambda x: x if pd.isna(x) or x <= today else pd.NaT
   )
 
-  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini) - Memastikan menggunakan _Insiden_Valid / _Insiden_Parsed
+  # A. Aging Incident (Hari dari Insiden s.d. Hari Ini)
   df["Aging Incident (Hari)"] = (today - df["_Insiden_Valid"]).dt.days
-  # Fallback jika _Insiden_Valid kosong tapi parsed ada isinya
-  mask_fallback = df["Aging Incident (Hari)"].isna() & df["_Insiden_Parsed"].notna()
-  df.loc[mask_fallback, "Aging Incident (Hari)"] = (today - df.loc[mask_fallback, "_Insiden_Parsed"]).dt.days
+  mask_fb = df["Aging Incident (Hari)"].isna() & df["_Insiden_Parsed"].notna()
+  df.loc[mask_fb, "Aging Incident (Hari)"] = (today - df.loc[mask_fb, "_Insiden_Parsed"]).dt.days
 
   # B. Cek status submission
   def get_submission_status(row):
@@ -103,7 +98,7 @@ def load_and_process_google_sheet():
 
   df["Status Submission"] = df.apply(get_submission_status, axis=1)
 
-  # C. Klasifikasi Status Aging / Scoreboard Berdasarkan Aturan Baru:
+  # C. Klasifikasi Status Aging / Scoreboard:
   def get_scoreboard_status(row):
     sub_stat = row["Status Submission"]
     aging = row["Aging Incident (Hari)"]
@@ -137,6 +132,7 @@ def load_and_process_google_sheet():
   df["Aging Submission (Hari)"] = df.apply(get_aging_sub_val, axis=1)
 
   return df, today
+
 
 try:
   df, today_date = load_and_process_google_sheet()
