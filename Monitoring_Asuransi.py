@@ -27,7 +27,7 @@ def session_expired_dialog():
 def check_password():
     USERS = {
         "harry": "paswara123",       # Akun lu
-        "budi": "asuransi2026",      # Akun rekan 1
+        "delda": "admin123",      # Akun rekan 1
         "siti": "sla_dashboard"       # Akun rekan 2
     }
 
