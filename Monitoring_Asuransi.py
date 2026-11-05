@@ -3,9 +3,10 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import time
 
 # ---------------------------------------------------------
-# 1. Konfigurasi Halaman Dashboard
+# 0. Konfigurasi Halaman & Autentikasi Login (Auto Logout + Pop-up Modal + Form Enter)
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="MSS Insurance Claim & SLA Dashboard",
@@ -13,6 +14,96 @@ st.set_page_config(
     layout="wide",
 )
 
+# Definisi Pop-up Dialog Session Expired (Muncul tepat saat timeout tercapai)
+@st.dialog("⚠️ Sesi Berakhir (Idle Timeout)")
+def session_expired_dialog():
+    st.warning("Tidak ada aktivitas (idle) selama batas waktu yang ditentukan. Sesi Anda telah berakhir demi keamanan data.")
+    st.markdown("Silakan klik tombol di bawah untuk kembali ke menu login.")
+    if st.button("OK, Login Kembali", use_container_width=True):
+        st.session_state["show_timeout_popup"] = False
+        st.session_state["session_expired"] = False
+        st.rerun()
+
+def check_password():
+    USERS = {
+        "harry": "paswara123",       # Akun lu
+        "budi": "asuransi2026",      # Akun rekan 1
+        "siti": "sla_dashboard"       # Akun rekan 2
+    }
+
+    # --- FITUR AUTO LOGOUT (Timeout 10 Detik untuk Testing / Ubah ke 1800 untuk 30 Menit) ---
+    TIMEOUT_LIMIT = 600  # dalam detik (bisa diganti 1800 untuk 30 menit)
+
+    if "password_correct" in st.session_state and st.session_state["password_correct"]:
+        if "last_active" in st.session_state:
+            elapsed_time = time.time() - st.session_state["last_active"]
+            if elapsed_time > TIMEOUT_LIMIT:
+                st.session_state["show_timeout_popup"] = True
+        
+        # Memicu background refresh agar timer terus menghitung mundur saat idle
+        st.markdown(
+            f"""
+            <meta http-equiv="refresh" content="{TIMEOUT_LIMIT + 1}">
+            """,
+            unsafe_allow_html=True
+        )
+
+    # Jika status timeout aktif, panggil pop-up dialog di tengah layar
+    if st.session_state.get("show_timeout_popup", False):
+        st.session_state["password_correct"] = False
+        session_expired_dialog()
+        return False
+
+    # --- FORM LOGIN TAMPILAN PRESISI & SUPORT ENTER ---
+    if "password_correct" not in st.session_state or not st.session_state["password_correct"]:
+        
+        # Mengatur proporsi kolom agar card login presisi dan rapi di tengah
+        _, col_center, _ = st.columns([2.3, 1.4, 2.3])
+        
+        with col_center:
+            st.markdown("<br><br>", unsafe_allow_html=True)
+            
+            # Menggunakan st.form agar bisa menekan tombol Enter untuk submit
+            with st.form("login_form", border=True):
+                st.markdown("### 🔒 Login Dashboard")
+                st.caption("Masukkan akun internal terdaftar.")
+                
+                username_input = st.text_input("Username")
+                password_input = st.text_input("Password", type="password")
+                
+                # Tombol submit di dalam form (bisa ditekan pakai Enter)
+                submit_button = st.form_submit_button("Login", use_container_width=True)
+                
+                if submit_button:
+                    if username_input in USERS and USERS[username_input] == password_input:
+                        st.session_state["password_correct"] = True
+                        st.session_state["logged_user"] = username_input
+                        st.session_state["last_active"] = time.time()  
+                        st.session_state["show_timeout_popup"] = False
+                        st.rerun()
+                    else:
+                        st.error("😕 Username / Password salah!")
+                
+        return False
+    else:
+        # Perbarui waktu aktif (last_active) jika ada interaksi klik/scroll/aktivitas lain
+        st.session_state["last_active"] = time.time()
+        return True
+
+if not check_password():
+    st.stop()
+
+# --- TOMBOL LOGOUT DI SIDEBAR ---
+with st.sidebar:
+    st.write(f"👤 Login sebagai: **{st.session_state['logged_user']}**")
+    if st.button("🚪 Logout"):
+        st.session_state["password_correct"] = False
+        st.session_state["show_timeout_popup"] = False
+        st.rerun()
+
+# ---------------------------------------------------------
+# 1. Konfigurasi Utama Dashboard
+# ---------------------------------------------------------
 st.title("🛡️ MSS Insurance Claim & SLA Tracking Dashboard")
 st.caption("Live Connection Google Sheets (Google Form) & Otomatisasi SLA")
 
@@ -276,7 +367,6 @@ try:
       
       st.dataframe(top10_boq.style.format({'Total Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True, height=380)
 
-      # Total Nilai BOQ dari seluruh data terfilter (ditaruh tepat di bawah tabel Top 10 BOQ)
       total_boq_value = df_boq[col_price].sum()
       st.metric(
           label="💰 Total Keseluruhan Nilai Claim BOQ", 
@@ -357,7 +447,7 @@ try:
                       "background-color: #c8e6c9; color: #2e7d32;"
                       if val in ["Prepare submit", "Sudah Submit Asuransi"]
                       else (
-                          "background-color: #ffebee; color: #c62828;"
+                          "box-shadow: none; background-color: #ffebee; color: #c62828;"
                           if val in ["Belum Submit", "Salah Input Tanggal"]
                           else ""
                       )
