@@ -6,7 +6,7 @@ import streamlit as st
 import time
 
 # ---------------------------------------------------------
-# 0. Konfigurasi Halaman & Autentikasi Login (Auto Logout + Pop-up Modal + Form Enter)
+# 0. Konfigurasi Halaman & Autentikasi Login
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="MSS Insurance Claim & SLA Dashboard",
@@ -14,7 +14,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# Definisi Pop-up Dialog Session Expired (Muncul tepat saat timeout tercapai)
 @st.dialog("⚠️ Sesi Berakhir (Idle Timeout)")
 def session_expired_dialog():
     st.warning("Tidak ada aktivitas (idle) selama batas waktu yang ditentukan. Sesi Anda telah berakhir demi keamanan data.")
@@ -26,13 +25,12 @@ def session_expired_dialog():
 
 def check_password():
     USERS = {
-        "harry": "paswara123",       # Akun lu
-        "delda": "admin123",      # Akun rekan 1
-        "siti": "sla_dashboard"       # Akun rekan 2
+        "harry": "paswara123",
+        "delda": "admin123",
+        "siti": "sla_dashboard"
     }
 
-    # --- FITUR AUTO LOGOUT (Timeout 10 Detik untuk Testing / Ubah ke 1800 untuk 30 Menit) ---
-    TIMEOUT_LIMIT = 600  # dalam detik (bisa diganti 1800 untuk 30 menit)
+    TIMEOUT_LIMIT = 600
 
     if "password_correct" in st.session_state and st.session_state["password_correct"]:
         if "last_active" in st.session_state:
@@ -40,7 +38,6 @@ def check_password():
             if elapsed_time > TIMEOUT_LIMIT:
                 st.session_state["show_timeout_popup"] = True
         
-        # Memicu background refresh agar timer terus menghitung mundur saat idle
         st.markdown(
             f"""
             <meta http-equiv="refresh" content="{TIMEOUT_LIMIT + 1}">
@@ -48,30 +45,20 @@ def check_password():
             unsafe_allow_html=True
         )
 
-    # Jika status timeout aktif, panggil pop-up dialog di tengah layar
     if st.session_state.get("show_timeout_popup", False):
         st.session_state["password_correct"] = False
         session_expired_dialog()
         return False
 
-    # --- FORM LOGIN TAMPILAN PRESISI & SUPORT ENTER ---
     if "password_correct" not in st.session_state or not st.session_state["password_correct"]:
-        
-        # Mengatur proporsi kolom agar card login presisi dan rapi di tengah
         _, col_center, _ = st.columns([2.3, 1.4, 2.3])
-        
         with col_center:
             st.markdown("<br><br>", unsafe_allow_html=True)
-            
-            # Menggunakan st.form agar bisa menekan tombol Enter untuk submit
             with st.form("login_form", border=True):
                 st.markdown("### 🔒 Login Dashboard")
                 st.caption("Masukkan akun internal terdaftar.")
-                
                 username_input = st.text_input("Username")
                 password_input = st.text_input("Password", type="password")
-                
-                # Tombol submit di dalam form (bisa ditekan pakai Enter)
                 submit_button = st.form_submit_button("Login", use_container_width=True)
                 
                 if submit_button:
@@ -83,17 +70,14 @@ def check_password():
                         st.rerun()
                     else:
                         st.error("😕 Username / Password salah!")
-                
         return False
     else:
-        # Perbarui waktu aktif (last_active) jika ada interaksi klik/scroll/aktivitas lain
         st.session_state["last_active"] = time.time()
         return True
 
 if not check_password():
     st.stop()
 
-# --- TOMBOL LOGOUT DI SIDEBAR ---
 with st.sidebar:
     st.write(f"👤 Login sebagai: **{st.session_state['logged_user']}**")
     if st.button("🚪 Logout"):
@@ -116,7 +100,7 @@ CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&
 # 2. Function Parsing Tanggal Super Agresif
 # ---------------------------------------------------------
 def parse_mixed_date(date_val):
-  if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() in ["nan", "none", "-"]:
+  if pd.isna(date_val) or str(date_val).strip() == "" or str(date_val).strip().lower() in ["nan", "none", "-", "nat"]:
     return pd.NaT
   
   date_str = str(date_val).strip().split()[0]
@@ -133,30 +117,19 @@ def parse_mixed_date(date_val):
       lower_str = lower_str.replace(k, v)
       break
 
-  for fmt in ("%d-%m-%Y", "%d-%m-%y", "%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y"):
+  for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%y", "%d/%m/%y", "%d-%b-%Y", "%d %b %Y"):
     try:
-      parsed = pd.to_datetime(lower_str, format=fmt)
+      parsed = pd.to_datetime(lower_str, format=fmt, errors='coerce')
       if not pd.isna(parsed):
         return parsed
-    except (ValueError, TypeError):
-      continue
-
-  for fmt in (
-      "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d", "%d-%m-%y", "%y-%m-%d",
-      "%d-%b-%Y", "%d-%b-%y", "%d %b %Y", "%d %B %Y", "%b %d, %Y"
-  ):
-    try:
-      parsed = pd.to_datetime(date_str, format=fmt)
-      if not pd.isna(parsed):
-        return parsed
-    except (ValueError, TypeError):
+    except:
       continue
 
   try:
-    parsed = pd.to_datetime(date_str, errors="coerce", dayfirst=True)
+    parsed = pd.to_datetime(date_str, errors='coerce', dayfirst=True)
     if not pd.isna(parsed):
       return parsed
-  except Exception:
+  except:
     pass
 
   return pd.NaT
@@ -167,42 +140,37 @@ def load_and_process_google_sheet():
   df = pd.read_csv(CSV_URL)
   df.columns = df.columns.astype(str).str.strip()
 
-  incident_candidates = [c for c in df.columns if any(k in c.lower() for k in ["insiden", "kejadian", "incident"])]
-  col_incident = incident_candidates[0] if incident_candidates else (df.columns[5] if len(df.columns) > 5 else df.columns[0])
+  # MENGGUNAKAN NAMA KOLOM EXACT SESUAI REQUEST LO:
+  col_incident = "Tanggal Insiden"
+  col_lappol = "Tanggal Pelaporan Kepolisian"
 
-  lappol_candidates = [c for c in df.columns if any(k in c.lower() for k in ["polisi", "lappol", "lap_pol"])]
-  col_lappol = lappol_candidates[0] if lappol_candidates else (df.columns[7] if len(df.columns) > 7 else df.columns[1])
-
+  # Cari kolom submission secara fleksibel
   submit_candidates = [c for c in df.columns if any(k in c.lower() for k in ["submit", "submission"])]
   col_submit_date = submit_candidates[0] if submit_candidates else None
 
+  # Eksekusi parsing tanggal
   df["_Insiden_Parsed"] = df[col_incident].apply(parse_mixed_date) if col_incident in df.columns else pd.NaT
   df["_LapPol_Parsed"] = df[col_lappol].apply(parse_mixed_date) if col_lappol in df.columns else pd.NaT
-
-  if col_submit_date and col_submit_date in df.columns:
-    df["_Submit_Parsed"] = df[col_submit_date].apply(parse_mixed_date)
-  else:
-    df["_Submit_Parsed"] = pd.NaT
+  df["_Submit_Parsed"] = df[col_submit_date].apply(parse_mixed_date) if (col_submit_date and col_submit_date in df.columns) else pd.NaT
 
   today = pd.Timestamp(datetime.now().date())
 
-  df["_Insiden_Valid"] = df["_Insiden_Parsed"].apply(
-      lambda x: x if pd.isna(x) or x <= today else pd.NaT
-  )
-  df["_LapPol_Valid"] = df["_LapPol_Parsed"].apply(
-      lambda x: x if pd.isna(x) or x <= today else pd.NaT
-  )
-  df["_Submit_Valid"] = df["_Submit_Parsed"].apply(
-      lambda x: x if pd.isna(x) or x <= today else pd.NaT
-  )
+  # 1. Aging Tanggal Incident (Hari) sampai Hari Ini
+  df["Aging Incident (Hari)"] = (today - df["_Insiden_Parsed"].dt.normalize()).dt.days
+  df["Aging Incident (Hari)"] = df["Aging Incident (Hari)"].apply(lambda x: x if pd.notna(x) and x >= 0 else np.nan)
 
-  # A. Aging Incident
-  df["Aging Incident (Hari)"] = (today - df["_Insiden_Parsed"]).dt.days
-  df["Aging Incident (Hari)"] = df["Aging Incident (Hari)"].apply(
-      lambda x: x if pd.notna(x) and x >= 0 else np.nan
-  )
+  # 2. Aging Tanggal Pelaporan (Hari) sampai Hari Ini
+  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Parsed"].dt.normalize()).dt.days
+  df["Aging Pelaporan (Hari)"] = df["Aging Pelaporan (Hari)"].apply(lambda x: x if pd.notna(x) and x >= 0 else np.nan)
 
-  # B. Status submission
+  # 3. Aging Tanggal Submission (Hari) sampai Hari Ini
+  df["Aging Submission (Hari)"] = (today - df["_Submit_Parsed"].dt.normalize()).dt.days if (col_submit_date and col_submit_date in df.columns) else np.nan
+  df["Aging Submission (Hari)"] = df["Aging Submission (Hari)"].apply(lambda x: x if pd.notna(x) and x >= 0 else np.nan)
+
+  # Column Possible Reject berdasarkan Aging Incident > 30 Hari
+  df["Possible Reject"] = df["Aging Incident (Hari)"].apply(lambda x: "Possible Reject (>30 Hari)" if pd.notna(x) and x > 30 else "Aman (≤30 Hari)")
+
+  # Status submission
   def get_submission_status(row):
     raw_sub_val = row[col_submit_date] if (col_submit_date and col_submit_date in df.columns) else None
     parsed_sub = row["_Submit_Parsed"]
@@ -215,52 +183,59 @@ def load_and_process_google_sheet():
 
   df["Status Submission"] = df.apply(get_submission_status, axis=1)
 
-  # C. Scoreboard Status
+  # Scoreboard Status
   def get_scoreboard_status(row):
-    sub_stat = row["Status Submission"]
     aging = row["Aging Incident (Hari)"]
 
+    if pd.notna(aging) and aging > 30:
+      return "Possible Reject"
+    
+    sub_stat = row["Status Submission"]
     if sub_stat == "Sudah Submit":
       return "Sudah Submit Asuransi"
     
     if pd.isna(aging):
       return "Reminding Harus Dikirim (Belum Submit)"
     
-    if aging > 30:
-      return "Expired"
-    elif aging > 14:
+    if aging > 14:
       return "Warning (Submit Soon)"
     else:
       return "Prepare submit"
 
   df["Status Aging Pelaporan"] = df.apply(get_scoreboard_status, axis=1)
 
-  # D. Aging Pelaporan & Submission
-  df["Aging Pelaporan (Hari)"] = (today - df["_LapPol_Parsed"]).dt.days
-  df["Aging Pelaporan (Hari)"] = df["Aging Pelaporan (Hari)"].apply(
-      lambda x: x if pd.notna(x) and x >= 0 else np.nan
-  )
+  # Parsing Nilai BOQ untuk kalkulasi nominal
+  boq_price_cols = [
+      c for c in df.columns 
+      if any(k in c.lower() for k in ["boq", "harga", "cost", "nilai", "amount", "total"])
+      and not any(exc in c.lower() for exc in ["upload", "link", "url"])
+  ]
+  col_price = boq_price_cols[0] if boq_price_cols else None
   
-  def get_aging_sub_val(row):
-    parsed_sub = row["_Submit_Parsed"]
-    if not pd.isna(parsed_sub):
-      val = (today - parsed_sub).days
-      return max(0, val)
-    return np.nan
+  if col_price:
+    cleaned_price = (
+        df[col_price].astype(str)
+        .str.replace('Rp', '', case=False, regex=False)
+        .str.replace('.', '', regex=False)
+        .str.replace(',', '.', regex=False)
+        .str.strip()
+    )
+    df["_Parsed_BOQ_Value"] = pd.to_numeric(cleaned_price, errors='coerce').fillna(0)
+  else:
+    df["_Parsed_BOQ_Value"] = 0.0
 
-  df["Aging Submission (Hari)"] = df.apply(get_aging_sub_val, axis=1)
-
-  return df, today
+  return df, today, col_incident, col_lappol
 
 
 try:
-  df, today_date = load_and_process_google_sheet()
+  df, today_date, det_inc, det_lap = load_and_process_google_sheet()
 
   # ---------------------------------------------------------
   # 3. Sidebar Filter Utama
   # ---------------------------------------------------------
   st.sidebar.header("🔍 Filter Dashboard")
   st.sidebar.info(f"📅 **Tanggal System:**\n{today_date.strftime('%d %B %Y')}")
+  st.sidebar.caption(f"📌 **Kolom Terhubung:**\n- Insiden: `{det_inc}`\n- LapPol: `{det_lap}`")
 
   if st.sidebar.button("🔄 Refresh Data Form"):
     st.cache_data.clear()
@@ -288,21 +263,35 @@ try:
   # 4. Top Metric Scoreboard
   # ---------------------------------------------------------
   total_site = len(df_filtered)
-  count_prepare = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Prepare submit"])
-  count_warning = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Warning (Submit Soon)"])
-  count_expired = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Expired"])
-  count_sudah_submit = len(df_filtered[df_filtered["Status Aging Pelaporan"] == "Sudah Submit Asuransi"])
-  count_reminder = len(df_filtered[df_filtered["Status Submission"] == "Belum Submit"])
+  count_sudah_submit = len(df_filtered[df_filtered["Status Submission"] == "Sudah Submit"])
+  
+  df_belum_submit = df_filtered[(df_filtered["Status Submission"] == "Belum Submit") & ((df_filtered["Aging Incident (Hari)"].isna()) | (df_filtered["Aging Incident (Hari)"] <= 30))]
+  count_belum_submit = len(df_belum_submit)
+  
+  # Possible Reject (>30 hari incident, terlepas sudah / belum submit)
+  count_possible_reject = len(df_filtered[df_filtered["Aging Incident (Hari)"] > 30])
 
   m1, m2, m3, m4 = st.columns(4)
-  m1.metric("Total Site Insiden", f"{total_site} Site")
-  m2.metric("🟢 Prepare Submit (<14 hr)", f"{count_prepare} Site")
-  m3.metric("🟡 Warning / Submit Soon (>14-30 hr)", f"{count_warning} Site")
-  m4.metric("🔴 Expired (>30 hr)", f"{count_expired} Site")
-
-  s1, s2 = st.columns(2)
-  s1.metric("✅ Sudah Submit Asuransi", f"{count_sudah_submit} Site")
-  s2.metric("🔔 Reminding Harus Dikirim (Belum Submit)", f"{count_reminder} Site")
+  
+  with m1:
+    st.metric(label="Total Incident", value=f"{total_site} Site")
+    
+  with m2:
+    st.metric(label="Sudah Submit", value=f"{count_sudah_submit} Site")
+    
+  with m3:
+    st.metric(label="Belum Submit", value=f"{count_belum_submit} Site")
+    aging_list = df_belum_submit["Aging Incident (Hari)"].dropna().tolist()
+    aging_str = ", ".join([f"{int(a)}h" for a in aging_list]) if aging_list else "0h"
+    st.caption(f"⚠️ Aging: {aging_str}")
+    
+  with m4:
+    st.metric(
+        label="Possible Reject", 
+        value=f"{count_possible_reject} Site", 
+        delta=">30 Hari Incident", 
+        delta_color="inverse"
+    )
 
   st.markdown("---")
 
@@ -353,21 +342,13 @@ try:
       st.markdown(f"##### Tabel: Top 10 Material BOQ Termahal ({col_price})")
       df_boq = df_filtered.copy()
       
-      df_boq[col_price] = (
-          df_boq[col_price].astype(str)
-          .str.replace('Rp', '', case=False, regex=False)
-          .str.replace('.', '', regex=False)
-          .str.replace(',', '.', regex=False)
-      )
-      df_boq[col_price] = pd.to_numeric(df_boq[col_price], errors='coerce')
-      
-      boq_summary = df_boq.groupby(col_mat)[col_price].sum().reset_index()
+      boq_summary = df_boq.groupby(col_mat)['_Parsed_BOQ_Value'].sum().reset_index()
       boq_summary.columns = ['Material', 'Total Nilai BOQ']
       top10_boq = boq_summary.sort_values(by='Total Nilai BOQ', ascending=False).head(10).reset_index(drop=True)
       
       st.dataframe(top10_boq.style.format({'Total Nilai BOQ': 'Rp {:,.2f}'}), use_container_width=True, height=380)
 
-      total_boq_value = df_boq[col_price].sum()
+      total_boq_value = df_boq['_Parsed_BOQ_Value'].sum()
       st.metric(
           label="💰 Total Keseluruhan Nilai Claim BOQ", 
           value=f"Rp {total_boq_value:,.2f}"
@@ -376,7 +357,42 @@ try:
       st.info("Kolom Nilai/Harga BOQ belum terdeteksi secara otomatis.")
 
   # ---------------------------------------------------------
-  # 6. Tabel Detail dengan 2 Filter
+  # 6. Valuasi BOQ (Tepat di Bawah Top Material BOQ)
+  # ---------------------------------------------------------
+  st.markdown("---")
+  st.markdown("#### 💰 Valuasi BOQ Overview (Sedang Berjalan vs Possible Reject)")
+
+  boq_possible_reject_val = df_filtered[df_filtered["Aging Incident (Hari)"] > 30]['_Parsed_BOQ_Value'].sum()
+  boq_sedang_berjalan_val = df_filtered[(df_filtered["Aging Incident (Hari)"].isna()) | (df_filtered["Aging Incident (Hari)"] <= 30)]['_Parsed_BOQ_Value'].sum()
+
+  b_col1, b_col2 = st.columns(2)
+
+  with b_col1:
+    st.markdown(
+        f"""
+        <div style="padding: 16px; border-radius: 8px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 5px solid #16a34a;">
+            <p style="margin: 0; font-size: 13px; color: #15803d; font-weight: 600;">VALUASI BOQ SEDANG BERJALAN</p>
+            <h3 style="margin: 6px 0 2px 0; color: #166534; font-size: 22px;">Rp {boq_sedang_berjalan_val:,.2f}</h3>
+            <p style="margin: 0; font-size: 11px; color: #4b5563;">Status aman / Incident ≤ 30 Hari</p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+
+  with b_col2:
+    st.markdown(
+        f"""
+        <div style="padding: 16px; border-radius: 8px; background-color: #fef2f2; border: 1px solid #fecaca; border-left: 5px solid #dc2626;">
+            <p style="margin: 0; font-size: 13px; color: #b91c1c; font-weight: 600;">VALUASI BOQ POSSIBLE REJECT</p>
+            <h3 style="margin: 6px 0 2px 0; color: #991b1b; font-size: 22px;">Rp {boq_possible_reject_val:,.2f}</h3>
+            <p style="margin: 0; font-size: 11px; color: #4b5563;">Potensi reject asuransi / Incident > 30 Hari</p>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+
+  # ---------------------------------------------------------
+  # 7. Tabel Detail dengan 2 Filter
   # ---------------------------------------------------------
   st.markdown("---")
   st.subheader("📋 Detail Status & Aging Site (Form Original Columns)")
@@ -415,6 +431,7 @@ try:
           "Status Aging Pelaporan",
           "Status Submission",
           "Aging Submission (Hari)",
+          "Possible Reject"
       ]
   ]
 
@@ -424,6 +441,7 @@ try:
       "Status Aging Pelaporan",
       "Status Submission",
       "Aging Submission (Hari)",
+      "Possible Reject"
   ]
 
   df_table_display = df_table_final[original_form_cols + added_cols].copy()
@@ -439,13 +457,13 @@ try:
       ).map(
           lambda val: (
               "background-color: #ffcdd2; color: #b71c1c; font-weight: bold;"
-              if val == "Expired"
+              if val in ["Expired", "Possible Reject", "Possible Reject (>30 Hari)"]
               else (
                   "background-color: #fff9c4; color: #f57f17;"
                   if val == "Warning (Submit Soon)"
                   else (
                       "background-color: #c8e6c9; color: #2e7d32;"
-                      if val in ["Prepare submit", "Sudah Submit Asuransi"]
+                      if val in ["Prepare submit", "Sudah Submit Asuransi", "Aman (≤30 Hari)"]
                       else (
                           "box-shadow: none; background-color: #ffebee; color: #c62828;"
                           if val in ["Belum Submit", "Salah Input Tanggal"]
@@ -454,7 +472,7 @@ try:
                   )
               )
           ),
-          subset=["Status Aging Pelaporan", "Status Submission"],
+          subset=["Status Aging Pelaporan", "Status Submission", "Possible Reject"],
       ),
       use_container_width=True,
       height=500,
